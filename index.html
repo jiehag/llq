@@ -59,7 +59,8 @@ button{border:none;background:none;cursor:pointer;padding:0}
 .tabs::-webkit-scrollbar{height:0}
 .tab{
   display:flex;align-items:center;gap:7px;height:30px;padding:0 8px 0 10px;
-  min-width:110px;max-width:210px;flex:0 0 auto;border-radius:9px 9px 0 0;
+  /* Chrome 式自适应：空间富余时均匀撑满（上限 210px），标签多时按比例收缩到最小 40px 再滚动 */
+  flex:1 1 110px;min-width:40px;max-width:210px;border-radius:9px 9px 0 0;
   color:var(--muted);cursor:default;position:relative;transition:background .13s,color .13s;
   -webkit-app-region:no-drag;
 }
@@ -309,7 +310,7 @@ button{border:none;background:none;cursor:pointer;padding:0}
   .winctrl{display:none}
   #tabs{overflow-x:auto;scrollbar-width:none}
   #tabs::-webkit-scrollbar{display:none}
-  .tab{min-width:84px;max-width:150px}
+  .tab{min-width:56px;max-width:150px}
   .toolbar{gap:4px;padding:0 5px}
   #btn-home,#btn-proxy{display:none}
   .nt-in{padding:34px 16px 44px}
@@ -1849,13 +1850,21 @@ document.addEventListener('keydown', e => {
 });
 
 /* 被代理页面发来的消息 */
+let lastNT = { url: '', at: 0 };
 window.addEventListener('message', e => {
   const d = e.data;
   if (!d || !d.__nova) return;
   const t = activeTab();
   if (!t) return;
   if (d.type === 'navigate') {
-    if (d.newTab) createTab({ url: d.url });
+    if (d.newTab) {
+      /* 去重：百度/必应等站点一次点击可能经 click 拦截 + window.open + mousedown
+       * 触发多次"新标签"请求，2.5 秒内相同 URL 只开一个标签 */
+      const now = Date.now();
+      if (d.url === lastNT.url && now - lastNT.at < 2500) { lastNT.at = now; return; }
+      lastNT = { url: d.url, at: now };
+      createTab({ url: d.url });
+    }
     else navigate(t, d.url, { raw: true });
   } else if (d.type === 'form') {
     submitProxiedForm(t, d.action, d.pairs);

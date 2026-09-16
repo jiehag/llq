@@ -312,13 +312,16 @@ function buildInjectScript(realUrl) {
     /* ---------- 导航劫持 ---------- */
     'function abs(u){try{return new URL(u,realHref()).href;}catch(e){return String(u);}}',
     'function findA(n){while(n&&n.nodeType===1&&n.tagName!=="A")n=n.parentElement;return n&&n.tagName==="A"?n:null;}',
-    'document.addEventListener("click",function(e){',
+    /* 用 window 捕获 + stopImmediatePropagation：百度/必应等站点在 document 上也挂了
+     * 点击处理器（会额外调用 window.open 造成重复开标签），stopPropagation 挡不住
+     * 同节点上的其他监听器，必须用 stopImmediatePropagation 才能完全接管一次点击。 */
+    'window.addEventListener("click",function(e){',
     '  var a=findA(e.target);if(!a)return;',
     '  var raw=a.getAttribute("href");',
     '  if(!raw||raw.charAt(0)==="#")return;',
     '  if(/^(javascript|mailto|tel|data|blob|about):/i.test(raw))return;',
     '  if(a.hasAttribute("download"))return;',
-    '  e.preventDefault();e.stopPropagation();',
+    '  e.preventDefault();e.stopImmediatePropagation();',
     '  post({type:"navigate",url:abs(raw),newTab:(a.target==="_blank"||e.ctrlKey||e.metaKey||e.shiftKey)});',
     '},true);',
     'document.addEventListener("auxclick",function(e){',
