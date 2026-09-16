@@ -962,7 +962,7 @@ function loadFrame(tab, url) {
   } else if (url.startsWith('nova://')) {
     src = 'about:blank';
   } else if (settings.proxy) {
-    src = '/__p?url=' + encodeURIComponent(url);
+    src = proxyHref(url);
   } else {
     src = url;
   }
@@ -1041,7 +1041,7 @@ function renderPlayer(tab, url, localName) {
     if (em) { openEmbed(em, u); return; }
     // 直链 -> 内置播放器
     let src = u;
-    if (settings.proxy && !/^(blob|data):/i.test(src)) src = '/__p?url=' + encodeURIComponent(src);
+    if (settings.proxy && !/^(blob|data):/i.test(src)) src = proxyHref(src);
     loadMedia(src, u);
   }
 
@@ -1056,7 +1056,7 @@ function renderPlayer(tab, url, localName) {
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-presentation allow-orientation-lock allow-pointer-lock');
     tab.view.appendChild(frame);
     tab.iframe = frame;
-    frame.src = settings.proxy ? '/__p?url=' + encodeURIComponent(embedUrl) : embedUrl;
+    frame.src = settings.proxy ? proxyHref(embedUrl) : embedUrl;
     tab.view.classList.toggle('on', tab.id === activeId);
     tabs.forEach(x => { if (x.view) x.view.classList.toggle('on', x.id === activeId); });
     syncUI();
@@ -1310,7 +1310,7 @@ function navigate(tab, input, opts) {
     tab.title = '在线播放 · ' + hostOf(url);
     recordHistory(url, tab.title);
     if (tab.mode === 'web' && tab.iframe) {
-      tab.iframe.src = settings.proxy ? '/__p?url=' + encodeURIComponent(em) : em;
+      tab.iframe.src = settings.proxy ? proxyHref(em) : em;
       tab.loading = true; renderTabbar(); startProgress();
       syncUI();
       return;
@@ -1872,7 +1872,7 @@ function submitProxiedForm(tab, action, pairs) {
   tab.url = action;
   const f = document.createElement('form');
   f.method = 'POST';
-  f.action = settings.proxy ? '/__p?url=' + encodeURIComponent(action) : action;
+  f.action = settings.proxy ? proxyHref(action) : action;
   f.target = tab.iframe.name;
   f.style.display = 'none';
   (pairs || []).forEach(p => {
@@ -1898,6 +1898,13 @@ function applyTheme(t) {
  * 启动
  * ================================================================== */
 const NOVA_SERVER = 'http://127.0.0.1:7180';
+
+/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），真实地址放 __nova_url 参数 */
+function proxyHref(url) {
+  let p = '/';
+  try { p = new URL(url).pathname || '/'; } catch (e) { /* ignore */ }
+  return p + '?__nova_url=' + encodeURIComponent(url);
+}
 
 /* 静态托管模式：页面不是从本地服务（server.js）提供的，
  * 此时网页代理不可用，仅保留视频播放器与可嵌入站点 */

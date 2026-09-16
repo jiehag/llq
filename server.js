@@ -110,15 +110,19 @@ function buildInjectScript(realUrl) {
     'var P=window.parent;',
     'function post(m){try{m.__nova=1;P.postMessage(m,"*");}catch(e){}}',
 
-    /* ---------- URL 重写 ---------- */
+    /* ---------- URL 重写 ----------
+     * 镜像路径方案：代理 URL = 本站 pathname + ?__nova_url=真实地址。
+     * 这样 iframe 的 location.pathname 与真实站点一致，SPA 路由（vue/react router 等）
+     * 读取 pathname 才不会 404。 */
+    'function ppath(abs){var p="/";try{p=new URL(abs).pathname||"/";}catch(e){}return p+"?__nova_url="+encodeURIComponent(abs);}',
     'function proxied(u){',
     '  try{',
     '    var s=String(u);',
     '    if(/^(about|javascript|mailto|tel|data|blob|nova):/i.test(s))return s;',
     '    var abs=new URL(s,document.baseURI).href;',
     '    if(!/^https?:/i.test(abs))return s;',
-    '    if(abs.indexOf(PROXY+"/__p?")===0)return s;',
-    '    return PROXY+"/__p?url="+encodeURIComponent(abs);',
+    '    if(abs.indexOf(PROXY)===0)return s;',
+    '    return PROXY+ppath(abs);',
     '  }catch(e){return String(u);}',
     '}',
 
@@ -251,7 +255,7 @@ function buildInjectScript(realUrl) {
     '    var abs=new URL(s,document.baseURI).href;',
     '    if(!/^https?:/i.test(abs))return;',
     '    if(abs.indexOf(PROXY)===0)return;',
-    '    var p=PROXY+"/__p?url="+encodeURIComponent(abs);',
+    '    var p=PROXY+ppath(abs);',
     '    if(el.src!==p)el.src=p;',
     '  }catch(e){}',
     '}',
@@ -306,9 +310,22 @@ function buildInjectScript(realUrl) {
     '  }catch(err){}',
     '},true);',
     'window.open=function(u){if(u)post({type:"navigate",url:abs(String(u)),newTab:true});return null;};',
+    /* location.assign / replace 改道镜像 URL（SPA 常用跳转方式） */
+    'try{',
+    '  location.assign=function(u){location.href=proxied(u);};',
+    '  location.replace=function(u){location.href=proxied(u);};',
+    '}catch(e){}',
+
+    /* ---------- history 钩子：SPA 路由切换时同步外壳地址与标题 ---------- */
+    'function realHref(){try{var m=/[?&]__nova_url=([^&]+)/.exec(location.search);if(m)return decodeURIComponent(m[1])+location.hash;}catch(e){}return location.href;}',
+    'try{',
+    '  var _ps=history.pushState,_rs=history.replaceState;',
+    '  history.pushState=function(){var r=_ps.apply(this,arguments);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
+    '  history.replaceState=function(){var r=_rs.apply(this,arguments);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
+    '}catch(e){}',
 
     /* ---------- 状态上报 ---------- */
-    'function report(){post({type:"meta",title:document.title||"",url:ORIGIN});}',
+    'function report(){post({type:"meta",title:document.title||"",url:realHref()});}',
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",report);else report();',
     'window.addEventListener("load",report);window.addEventListener("hashchange",report);',
     'setTimeout(report,800);setTimeout(report,2500);setTimeout(report,6000);',
@@ -354,20 +371,27 @@ function decodeText(buf, charset) {
   }
 }
 
+/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），真实地址放 __nova_url 参数 */
+function proxyUrlFor(realUrl) {
+  let p = '/';
+  try { p = new URL(realUrl).pathname || '/'; } catch (e) { /* ignore */ }
+  return p + '?__nova_url=' + encodeURIComponent(realUrl);
+}
+
 function rewriteIframeSrcs(html, realUrl) {
   return html.replace(
     /<iframe\b([^>]*?)\bsrc\s*=\s*(["'])([^"']+)\2/gi,
     (m, pre, q, src) => {
       const t = src.trim();
       if (!/^https?:/i.test(t) && !/^\//.test(t) && !/^\./.test(t)) return m;
-      if (t.startsWith('/__p?')) return m;
+      if (t.startsWith('/__p?') || t.includes('__nova_url=')) return m;
       let abs;
       try {
         abs = new URL(t, realUrl).href;
       } catch (e) {
         return m;
       }
-      return '<iframe' + pre + ' src=' + q + '/__p?url=' + encodeURIComponent(abs) + q;
+      return '<iframe' + pre + ' src=' + q + proxyUrlFor(abs) + q;
     }
   );
 }
@@ -381,7 +405,7 @@ function rewriteMetaRefresh(html, realUrl) {
       const raw = mm[1].trim().replace(/^["']|["']$/g, '');
       try {
         const abs = new URL(raw, realUrl).href;
-        return pre + content.replace(mm[1], '/__p?url=' + encodeURIComponent(abs)) + post;
+        return pre + content.replace(mm[1], proxyUrlFor(abs)) + post;
       } catch (e) {
         return m;
       }
@@ -498,7 +522,10 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
   if (ref) {
     try {
       const ru = new URL(ref);
-      if (ru.pathname === '/__p') {
+      const nt = ru.searchParams.get('__nova_url');
+      if (nt) {
+        realRef = nt;
+      } else if (ru.pathname === '/__p') {
         const target = ru.searchParams.get('url');
         if (target) realRef = target;
       } else if (/^https?:/i.test(ref)) {
@@ -763,6 +790,27 @@ function start(port) {
     const parsed = new URL(req.url, 'http://127.0.0.1');
     const p = parsed.pathname;
 
+    /* 镜像路径代理：任何带 __nova_url 参数的请求都转发到真实地址 */
+    const novaTarget = parsed.searchParams.get('__nova_url');
+    if (novaTarget) {
+      if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+        const bufs = [];
+        let size = 0;
+        req.on('data', (c) => {
+          size += c.length;
+          if (size > 8 * 1024 * 1024) {
+            req.destroy();
+            return;
+          }
+          bufs.push(c);
+        });
+        req.on('end', () => proxyRequest(req, res, novaTarget, 0, req.method, Buffer.concat(bufs)));
+        req.on('error', () => res.end());
+        return;
+      }
+      return proxyRequest(req, res, novaTarget, 0, 'GET', null);
+    }
+
     if (p === '/__health') {
       res.writeHead(200, {
         'content-type': 'application/json',
@@ -799,6 +847,23 @@ function start(port) {
         return;
       }
       return proxyRequest(req, res, t, 0, 'GET', null);
+    }
+
+    /* 兜底中转：页面里未被钩住的跳转（如 location.href='/xxx'）会打到本站裸路径。
+     * 若 Referer 是镜像代理页，则 302 到对应的镜像 URL，保证导航不断链。 */
+    if (p !== '/' && p !== '/index.html' && !p.startsWith('/__')) {
+      const rf = req.headers['referer'];
+      if (rf) {
+        try {
+          const ru = new URL(rf);
+          const rt = ru.searchParams.get('__nova_url');
+          if (rt) {
+            const rOrigin = new URL(rt).origin;
+            res.writeHead(302, { location: p + '?__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
+            return res.end();
+          }
+        } catch (e) { /* ignore */ }
+      }
     }
 
     if (p === '/' || p === '/index.html') return serveStatic(req, res, 'index.html');
