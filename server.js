@@ -53,6 +53,16 @@ function cookieHeaderFor(host) {
   if (!j.size) return '';
   return [...j.entries()].map(([k, v]) => k + '=' + v).join('; ');
 }
+/* Cookie 归属罐子：优先遵循 Set-Cookie 的 Domain 属性（浏览器规则：
+ * Domain 必须是请求 host 的后缀，否则拒绝），否则按请求 host 的主域归并。 */
+function jarKeyFor(host, domainAttr) {
+  const h = String(host || '').toLowerCase().replace(/^\./, '');
+  if (domainAttr) {
+    const d = String(domainAttr).toLowerCase().replace(/^\./, '');
+    if (d && (h === d || h.endsWith('.' + d))) return baseDomainOf(d);
+  }
+  return baseDomainOf(h);
+}
 function parseSetCookie(raw) {
   const parts = String(raw).split(';');
   const eq = parts[0].indexOf('=');
@@ -61,6 +71,7 @@ function parseSetCookie(raw) {
   const value = parts[0].slice(eq + 1).trim();
   if (!name) return null;
   let dead = false;
+  let domain = '';
   for (let i = 1; i < parts.length; i++) {
     const s = parts[i].trim();
     const li = s.indexOf('=');
@@ -71,19 +82,49 @@ function parseSetCookie(raw) {
       const d = Date.parse(v);
       if (!isNaN(d) && d < Date.now()) dead = true;
     }
+    if (k === 'domain') domain = v;
   }
-  return dead ? { name, dead: true } : { name, value, dead: false };
+  return { name, value, dead, domain };
 }
 function storeCookies(host, list) {
   if (!list) return;
   const items = Array.isArray(list) ? list : [list];
-  const j = jarOf(baseDomainOf(host));
   for (const raw of items) {
     const c = parseSetCookie(raw);
     if (!c) continue;
+    const j = jarOf(jarKeyFor(host, c.domain));
     if (c.dead) j.delete(c.name);
     else j.set(c.name, c.value);
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 诊断日志：NOVA_DIAG=1 时记录代理请求/响应（Cookie 仅记名不记值）
+ * 用于排查风控类问题（验证码反复出现等）
+ * ------------------------------------------------------------------ */
+const DIAG = process.env.NOVA_DIAG === '1';
+const DIAG_FILE = path.join(ROOT, 'nova-diag.log');
+function ckNames(header) {
+  return String(header || '')
+    .split(';')
+    .map((s) => s.trim().split('=')[0])
+    .filter(Boolean)
+    .slice(0, 40);
+}
+function setCkNames(list) {
+  if (!list) return [];
+  const a = Array.isArray(list) ? list : [list];
+  return a.map((s) => String(s).split(';')[0].split('=')[0]).filter(Boolean);
+}
+let diagSize = 0;
+const DIAG_MAX = 5 * 1024 * 1024;
+function diag(entry) {
+  if (!DIAG || diagSize > DIAG_MAX) return;
+  try {
+    const line = JSON.stringify(Object.assign({ t: new Date().toISOString() }, entry)) + '\n';
+    diagSize += Buffer.byteLength(line);
+    fs.appendFileSync(DIAG_FILE, line);
+  } catch (e) { /* ignore */ }
 }
 
 /* ------------------------------------------------------------------ *
@@ -585,6 +626,9 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
   for (const [k, v] of Object.entries(clientReq.headers)) {
     const lk = k.toLowerCase();
     if (DROP_REQ_HEADERS.has(lk)) continue;
+    /* 客户端提示与 Fetch 元数据要原样转发：真实 Chrome 必发 sec-ch-ua* / sec-fetch-*，
+     * 全丢会与 UA 自相矛盾，风控（阿里 um.js 等）会据此加风险分、提高验证码频率。 */
+    if (lk.startsWith('sec-ch-ua') || lk.startsWith('sec-fetch-')) { headers[lk] = v; continue; }
     if (lk.startsWith('sec-') || lk.startsWith('proxy-')) continue;
     headers[lk] = v;
   }
@@ -651,6 +695,14 @@ function proxyRequest(clientReq, clientRes, targetUrl, depth, method, bodyBuf) {
   const lib = u.protocol === 'https:' ? https : http;
   const headers = buildUpstreamHeaders(clientReq, u, bodyBuf);
 
+  diag({
+    req: (u.host + u.pathname).slice(0, 140),
+    q: (u.search || '').slice(0, 140),
+    m: method || 'GET',
+    ck: ckNames(headers['cookie']),
+    ref: String(headers['referer'] || '').slice(0, 120),
+  });
+
   const preq = lib.request(
     {
       protocol: u.protocol,
@@ -664,6 +716,16 @@ function proxyRequest(clientReq, clientRes, targetUrl, depth, method, bodyBuf) {
     (pres) => {
       const code = pres.statusCode || 200;
       if ([301, 302, 303, 307, 308].includes(code) && pres.headers.location && depth < 8) {
+        /* 关键：重定向响应里的 Set-Cookie 必须落罐（风控验证通过凭证 x5sec 就是这么下发的），
+         * 原来直接 resume() 丢弃，导致"验证通过→凭证丢失→立即重新挑战"。 */
+        storeCookies(u.hostname, pres.headers['set-cookie']);
+        diag({
+          res: (u.host + u.pathname).slice(0, 140),
+          st: code,
+          setck: setCkNames(pres.headers['set-cookie']),
+          loc: String(pres.headers.location).slice(0, 160),
+          redirect: 1,
+        });
         pres.resume();
         let next;
         try {
@@ -700,6 +762,12 @@ function proxyRequest(clientReq, clientRes, targetUrl, depth, method, bodyBuf) {
 
 function handleUpstream(pres, res, u) {
   storeCookies(u.hostname, pres.headers['set-cookie']);
+  diag({
+    res: (u.host + u.pathname).slice(0, 140),
+    st: pres.statusCode,
+    setck: setCkNames(pres.headers['set-cookie']),
+    loc: pres.headers['location'] ? String(pres.headers['location']).slice(0, 160) : undefined,
+  });
 
   const ct = String(pres.headers['content-type'] || '').toLowerCase();
   const isHtml = ct.includes('text/html') || ct.includes('application/xhtml+xml');
@@ -847,7 +915,7 @@ function handleCookieSync(req, res, parsed) {
       body.split('\n').forEach((line) => {
         const c = parseSetCookie(line.trim());
         if (!c) return;
-        const j = jarOf(baseDomainOf(host));
+        const j = jarOf(jarKeyFor(host, c.domain));
         if (c.dead) j.delete(c.name);
         else j.set(c.name, c.value);
       });
