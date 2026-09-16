@@ -920,8 +920,9 @@ function renderWeb(tab, url) {
   frame.name = 'novaframe' + tab.id;
   frame.setAttribute('allow', 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *; clipboard-write; geolocation');
   frame.setAttribute('allowfullscreen', 'true');
-  /* sandbox 不含 allow-top-navigation：阻止页面的反框架脚本把外壳顶掉 */
-  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-presentation allow-orientation-lock allow-pointer-lock allow-popups');
+  /* sandbox 不含 allow-top-navigation 与 allow-popups：页面的反框架脚本顶不掉外壳，
+     target=_blank / window.open 也无法跳出真实浏览器（代理模式下由注入脚本改道 Nova 新标签） */
+  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-presentation allow-orientation-lock allow-pointer-lock');
 
   const wrap = document.createElement('div');
   wrap.className = 'zoomwrap';
@@ -1052,7 +1053,7 @@ function renderPlayer(tab, url, localName) {
     frame.className = 'frame';
     frame.setAttribute('allow', 'autoplay *; fullscreen *; encrypted-media *; picture-in-picture *');
     frame.setAttribute('allowfullscreen', 'true');
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-presentation allow-orientation-lock allow-pointer-lock allow-popups');
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads allow-presentation allow-orientation-lock allow-pointer-lock');
     tab.view.appendChild(frame);
     tab.iframe = frame;
     frame.src = settings.proxy ? '/__p?url=' + encodeURIComponent(embedUrl) : embedUrl;
