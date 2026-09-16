@@ -106,6 +106,8 @@ function buildInjectScript(realUrl) {
     '<script data-nova="1">(function(){',
     'var ORIGIN=' + JSON.stringify(origin) + ';',
     'var CKT=' + JSON.stringify(token) + ';',
+    /* 令牌按完整真实 URL 计算，/__ck 必须上报同一字符串，否则服务端 ckToken(o) 校验必然 403 */
+    'var RU=' + JSON.stringify(realUrl) + ';',
     'var PROXY=location.origin;',
     'var P=window.parent;',
     'function post(m){try{m.__nova=1;P.postMessage(m,"*");}catch(e){}}',
@@ -115,11 +117,13 @@ function buildInjectScript(realUrl) {
      * 这样 iframe 的 location.pathname 与真实站点一致，SPA 路由（vue/react router 等）
      * 读取 pathname 才不会 404。 */
     'function ppath(abs){var p="/";try{p=new URL(abs).pathname||"/";}catch(e){}return p+"?__nova_url="+encodeURIComponent(abs);}',
+    /* 相对地址解析基准用真实地址 realHref()（函数声明提升可用），不能用 document.baseURI：
+     * 镜像模式下已不注入 <base>，baseURI 是代理 URL，会把相对链接解析到本站源 */
     'function proxied(u){',
     '  try{',
     '    var s=String(u);',
     '    if(/^(about|javascript|mailto|tel|data|blob|nova):/i.test(s))return s;',
-    '    var abs=new URL(s,document.baseURI).href;',
+    '    var abs=new URL(s,realHref()).href;',
     '    if(!/^https?:/i.test(abs))return s;',
     '    if(abs.indexOf(PROXY)===0)return s;',
     '    return PROXY+ppath(abs);',
@@ -143,14 +147,14 @@ function buildInjectScript(realUrl) {
     'var ckQ=[],ckTimer=null;',
     'function ckPost(v){ckQ.push(v);if(ckTimer)return;ckTimer=setTimeout(ckFlush,250);}',
     'function ckFlush(){ckTimer=null;var b=ckQ.join("\\n");ckQ=[];',
-    '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(ORIGIN)+"&t="+encodeURIComponent(CKT),{method:"POST",body:b,keepalive:true});}catch(e){}}',
+    '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(RU)+"&t="+encodeURIComponent(CKT),{method:"POST",body:b,keepalive:true});}catch(e){}}',
     'var ckLast=0,ckPend=false;',
     'function ckSync(){',
     '  var now=Date.now();',
     '  if(now-ckLast<2000){if(!ckPend){ckPend=true;setTimeout(function(){ckPend=false;ckSync();},2100);}return;}',
     '  ckLast=now;',
-    '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(ORIGIN)+"&t="+encodeURIComponent(CKT)).then(function(r){return r.text();}).then(ckMerge);}catch(e){}}',
-    'try{fetch(PROXY+"/__ck?o="+encodeURIComponent(ORIGIN)+"&t="+encodeURIComponent(CKT)).then(function(r){return r.text();}).then(ckMerge);}catch(e){}',
+    '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(RU)+"&t="+encodeURIComponent(CKT)).then(function(r){return r.text();}).then(ckMerge);}catch(e){}}',
+    'try{fetch(PROXY+"/__ck?o="+encodeURIComponent(RU)+"&t="+encodeURIComponent(CKT)).then(function(r){return r.text();}).then(ckMerge);}catch(e){}',
     'try{',
     '  var dcp=Object.getOwnPropertyDescriptor(Document.prototype,"cookie");',
     '  Object.defineProperty(document,"cookie",{configurable:true,',
@@ -252,7 +256,7 @@ function buildInjectScript(realUrl) {
     '    var s=el.getAttribute("src");',
     '    if(!s)return;',
     '    if(/^(about|javascript|data|blob):/i.test(s))return;',
-    '    var abs=new URL(s,document.baseURI).href;',
+    '    var abs=new URL(s,realHref()).href;',
     '    if(!/^https?:/i.test(abs))return;',
     '    if(abs.indexOf(PROXY)===0)return;',
     '    var p=PROXY+ppath(abs);',
@@ -279,7 +283,7 @@ function buildInjectScript(realUrl) {
     '}catch(e){}',
 
     /* ---------- 导航劫持 ---------- */
-    'function abs(u){try{return new URL(u,document.baseURI).href;}catch(e){return String(u);}}',
+    'function abs(u){try{return new URL(u,realHref()).href;}catch(e){return String(u);}}',
     'function findA(n){while(n&&n.nodeType===1&&n.tagName!=="A")n=n.parentElement;return n&&n.tagName==="A"?n:null;}',
     'document.addEventListener("click",function(e){',
     '  var a=findA(e.target);if(!a)return;',
@@ -320,9 +324,12 @@ function buildInjectScript(realUrl) {
      * 关键：SPA 路由器（vue-router/react-router/Next.js）会调用
      * pushState/replaceState 写入真实站点 URL（如 https://juejin.cn/post/1），
      * 而代理文档的源是本站，浏览器会抛 SecurityError 导致路由器崩溃、
-     * 点击链接全部失效。必须在调用原始方法前把 URL 重写为镜像代理 URL。 */
-    'function realHref(){try{var m=/[?&]__nova_url=([^&]+)/.exec(location.search);if(m)return decodeURIComponent(m[1])+location.hash;}catch(e){}return location.href;}',
-    'function stateUrl(u){try{if(u==null||u==="")return null;var abs=new URL(String(u),realHref());return PROXY+ppath(abs);}catch(e){return null;}}',
+     * 点击链接全部失效。必须在调用原始方法前把 URL 重写为镜像代理 URL。
+     * 注意：有些站点（如 B 站）直接传 location.href（即代理 URL 本身），
+     * 若不先解包会套娃成双重镜像，导致 Referer 还原失败、API 被风控拦截。 */
+    'function unproxy(u){var g=0;u=String(u);while(g++<5&&u.indexOf(PROXY)===0){var i=u.indexOf("?__nova_url=");if(i<0)break;try{u=decodeURIComponent(u.slice(i+12));}catch(e){break;}}return u;}',
+    'function realHref(){try{var m=/[?&]__nova_url=([^&]+)/.exec(location.search);if(m)return unproxy(decodeURIComponent(m[1]))+location.hash;}catch(e){}return location.href;}',
+    'function stateUrl(u){try{if(u==null||u==="")return null;var abs=new URL(String(u),realHref());return PROXY+ppath(new URL(unproxy(abs.href)));}catch(e){return null;}}',
     'try{',
     '  var _ps=history.pushState,_rs=history.replaceState;',
     '  history.pushState=function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_ps.apply(this,arguments):_ps.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
@@ -435,7 +442,11 @@ function rewriteHtml(html, realUrl) {
 
   const head = [];
   head.push('<meta charset="utf-8">');
-  head.push('<base href="' + realUrl.replace(/"/g, '&quot;') + '">');
+  /* 注意：镜像路径模式下绝不注入 <base> 标签！
+   * vue-router 的 createWebHistory 无 base 参数时会读取 <base> 标签作为应用基路径，
+   * 导致当前路径被错误剥离（/c/music/ 被剥成 /）→ 匹配 catchAll → B 站分区页
+   * 显示"此分区不存在"。镜像方案下代理路径与真实路径一致，相对资源天然正确，
+   * 未被钩住的裸路径请求由 302 兜底还原真实主机，无需 base。 */
   head.push(buildInjectScript(realUrl));
 
   const block = head.join('\n');
@@ -505,6 +516,19 @@ const DROP_REQ_HEADERS = new Set([
   'cookie', 'origin', 'referer', 'upgrade-insecure-requests',
 ]);
 
+/* 解开可能存在的"套娃"镜像包装：自身代理 URL 里的 __nova_url 逐层解码 */
+function unwrapSelf(host, url) {
+  let out = String(url || '');
+  const prefixes = ['http://' + host + '/', 'https://' + host + '/'];
+  for (let g = 0; g < 5; g++) {
+    if (!prefixes.some((p) => out.startsWith(p))) break;
+    const idx = out.indexOf('?__nova_url=');
+    if (idx < 0) break;
+    try { out = decodeURIComponent(out.slice(idx + 12)); } catch (e) { break; }
+  }
+  return out;
+}
+
 function buildUpstreamHeaders(clientReq, u, bodyBuf) {
   const headers = {};
   for (const [k, v] of Object.entries(clientReq.headers)) {
@@ -514,7 +538,7 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
     headers[lk] = v;
   }
 
-  headers['user-agent'] = clientReq.headers['user-agent'] || UA;
+  headers['user-agent'] = (clientReq.headers['user-agent'] || UA).replace(/HeadlessChrome/gi, 'Chrome');
   headers['accept'] =
     clientReq.headers['accept'] ||
     'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
@@ -529,7 +553,7 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
       const ru = new URL(ref);
       const nt = ru.searchParams.get('__nova_url');
       if (nt) {
-        realRef = nt;
+        realRef = unwrapSelf(req.headers.host || '', nt);
       } else if (ru.pathname === '/__p') {
         const target = ru.searchParams.get('url');
         if (target) realRef = target;
@@ -863,7 +887,7 @@ function start(port) {
           const ru = new URL(rf);
           const rt = ru.searchParams.get('__nova_url');
           if (rt) {
-            const rOrigin = new URL(rt).origin;
+            const rOrigin = new URL(unwrapSelf(req.headers.host || '', rt)).origin;
             res.writeHead(302, { location: p + '?__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
             return res.end();
           }
