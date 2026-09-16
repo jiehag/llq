@@ -112,6 +112,33 @@ function buildInjectScript(realUrl) {
     'var P=window.parent;',
     'function post(m){try{m.__nova=1;P.postMessage(m,"*");}catch(e){}}',
 
+    /* ---------- 反调试中和 ----------
+     * 很多站用 Function("debugger")/eval("debugger")/setInterval 循环做反调试，
+     * 开发者工具一旦打开（或打开过）页面就反复暂停（"已在调试程序中暂停"）。
+     * 这里在页面脚本运行前把 debugger 语句剥掉：仅当检测到 debugger 时才介入，不影响正常代码。 */
+    'try{',
+    '  var _NF=window.Function;',
+    '  function stripDbg(s){return String(s).replace(/\\bdebugger\\b/g,"");}',
+    '  var NF=function(){',
+    '    var a=[].slice.call(arguments);',
+    '    var body=a[a.length-1];',
+    '    if(typeof body==="string"&&body.indexOf("debugger")>=0){',
+    '      for(var i=0;i<a.length;i++){if(typeof a[i]==="string")a[i]=stripDbg(a[i]);}',
+    '    }',
+    '    return _NF.apply(this,a);',
+    '  };',
+    '  NF.prototype=_NF.prototype;',
+    '  NF.prototype.constructor=NF;',
+    '  window.Function=NF;',
+    '  var _EV=window.eval;',
+    '  window.eval=function(s){try{if(typeof s==="string"&&s.indexOf("debugger")>=0)s=stripDbg(s);}catch(e){}return _EV.call(window,s);};',
+    '  var _SI=window.setInterval;',
+    '  window.setInterval=function(f,t){',
+    '    try{var s=typeof f==="string"?f:(typeof f==="function"?String(f):"");if(s&&s.indexOf("debugger")>=0)return 0;}catch(e){}',
+    '    return _SI.apply(window,arguments);',
+    '  };',
+    '}catch(e){}',
+
     /* ---------- URL 重写 ----------
      * 镜像路径方案：代理 URL = 本站 pathname + ?__nova_url=真实地址。
      * 这样 iframe 的 location.pathname 与真实站点一致，SPA 路由（vue/react router 等）
