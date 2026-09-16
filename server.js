@@ -111,6 +111,11 @@ function buildInjectScript(realUrl) {
     'var PROXY=location.origin;',
     'var P=window.parent;',
     'function post(m){try{m.__nova=1;P.postMessage(m,"*");}catch(e){}}',
+    /* 原生函数伪装：被包装的函数 toString 时返回原生签名。
+     * 阿里系风控脚本（um.js 等）会检查 Function.prototype.toString 判断
+     * 原生函数是否被篡改，检测到就提高验证码挑战频率。 */
+    'function __nat(f,orig){try{var s=Function.prototype.toString.call(orig);',
+    '  Object.defineProperty(f,"toString",{value:function(){return s;},configurable:true,writable:true});}catch(e){}return f;}',
 
     /* ---------- 反调试中和 ----------
      * 很多站用 Function("debugger")/eval("debugger")/setInterval 循环做反调试，
@@ -129,14 +134,14 @@ function buildInjectScript(realUrl) {
     '  };',
     '  NF.prototype=_NF.prototype;',
     '  NF.prototype.constructor=NF;',
-    '  window.Function=NF;',
+    '  window.Function=__nat(NF,_NF);',
     '  var _EV=window.eval;',
-    '  window.eval=function(s){try{if(typeof s==="string"&&s.indexOf("debugger")>=0)s=stripDbg(s);}catch(e){}return _EV.call(window,s);};',
+    '  window.eval=__nat(function(s){try{if(typeof s==="string"&&s.indexOf("debugger")>=0)s=stripDbg(s);}catch(e){}return _EV.call(window,s);},_EV);',
     '  var _SI=window.setInterval;',
-    '  window.setInterval=function(f,t){',
+    '  window.setInterval=__nat(function(f,t){',
     '    try{var s=typeof f==="string"?f:(typeof f==="function"?String(f):"");if(s&&s.indexOf("debugger")>=0)return 0;}catch(e){}',
     '    return _SI.apply(window,arguments);',
-    '  };',
+    '  },_SI);',
     '}catch(e){}',
 
     /* ---------- URL 重写 ----------
@@ -179,6 +184,15 @@ function buildInjectScript(realUrl) {
     'function ckPost(v){ckQ.push(v);if(ckTimer)return;ckTimer=setTimeout(ckFlush,250);}',
     'function ckFlush(){ckTimer=null;var b=ckQ.join("\\n");ckQ=[];',
     '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(RU)+"&t="+encodeURIComponent(CKT),{method:"POST",body:b,keepalive:true});}catch(e){}}',
+    /* 关键：验证码组件（阿里 x5sec 等）成功后写 Cookie 会立刻 reload 页面，
+     * 250ms 批量定时器被打断会导致验证通过的 Cookie 永远不上报、验证码反复出现。
+     * 页面卸载/隐藏时立即同步冲刷（fetch keepalive 保证卸载后仍能送达）。 */
+    'function ckFlushNow(){if(ckTimer){clearTimeout(ckTimer);ckTimer=null;ckFlush();}}',
+    'try{',
+    '  window.addEventListener("pagehide",ckFlushNow,true);',
+    '  window.addEventListener("beforeunload",ckFlushNow,true);',
+    '  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")ckFlushNow();},true);',
+    '}catch(e){}',
     'var ckLast=0,ckPend=false;',
     'function ckSync(){',
     '  var now=Date.now();',
@@ -221,7 +235,7 @@ function buildInjectScript(realUrl) {
     'try{',
     '  var _fetch=window.fetch;',
     '  if(_fetch){',
-    '    window.fetch=function(input,init){',
+    '    window.fetch=__nat(function(input,init){',
     '      try{',
     '        if(input&&typeof input==="object"&&typeof input.url==="string"){',
     '          var ru=input.url;var nu=proxied(ru);',
@@ -237,7 +251,7 @@ function buildInjectScript(realUrl) {
     '        var su=String(input);var nu2=proxied(su);',
     '        return patchResp(_fetch.call(window,nu2,init),nu2===su?null:su);',
     '      }catch(e){return _fetch.apply(window,arguments);}',
-    '    };',
+    '    },_fetch);',
     '  }',
     '}catch(e){}',
 
@@ -246,21 +260,21 @@ function buildInjectScript(realUrl) {
     '  var X=window.XMLHttpRequest&&window.XMLHttpRequest.prototype;',
     '  if(X){',
     '    var _open=X.open,_send=X.send;',
-    '    X.open=function(m,u){',
+    '    X.open=__nat(function(m,u){',
     '      this.__nOrig=String(u);this.__nReal=proxied(u);',
     '      return _open.apply(this,[m,this.__nReal].concat([].slice.call(arguments,2)));',
-    '    };',
-    '    X.send=function(){',
+    '    },_open);',
+    '    X.send=__nat(function(){',
     '      var x=this;',
     '      if(x.__nOrig){try{Object.defineProperty(x,"responseURL",{get:function(){return x.__nOrig;},configurable:true});}catch(e){}}',
     '      x.addEventListener("loadend",function(){ckSync();});',
     '      return _send.apply(x,arguments);',
-    '    };',
+    '    },_send);',
     '  }',
     '}catch(e){}',
 
     /* ---------- sendBeacon / EventSource / WebSocket / SW ---------- */
-    'try{if(navigator.sendBeacon){var _sb=navigator.sendBeacon.bind(navigator);navigator.sendBeacon=function(u,d){try{return _sb(proxied(String(u)),d);}catch(e){return false;}};}}catch(e){}',
+    'try{if(navigator.sendBeacon){var _sb=navigator.sendBeacon.bind(navigator);navigator.sendBeacon=__nat(function(u,d){try{return _sb(proxied(String(u)),d);}catch(e){return false;}},navigator.sendBeacon);}}catch(e){}',
     'try{var _ES=window.EventSource;if(_ES){window.EventSource=function(u,c){return new _ES(proxied(String(u)),c);};window.EventSource.prototype=_ES.prototype;}}catch(e){}',
     'try{',
     '  var _WS=window.WebSocket;',
@@ -347,7 +361,7 @@ function buildInjectScript(realUrl) {
     '    }',
     '  }catch(err){}',
     '},true);',
-    'window.open=function(u){if(u)post({type:"navigate",url:abs(String(u)),newTab:true});return null;};',
+    'window.open=__nat(function(u){if(u)post({type:"navigate",url:abs(String(u)),newTab:true});return null;},window.open);',
     /* location.assign / replace 改道镜像 URL（SPA 常用跳转方式） */
     'try{',
     '  location.assign=function(u){location.href=proxied(u);};',
@@ -366,8 +380,8 @@ function buildInjectScript(realUrl) {
     'function stateUrl(u){try{if(u==null||u==="")return null;var abs=new URL(String(u),realHref());return PROXY+ppath(new URL(unproxy(abs.href)));}catch(e){return null;}}',
     'try{',
     '  var _ps=history.pushState,_rs=history.replaceState;',
-    '  history.pushState=function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_ps.apply(this,arguments):_ps.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
-    '  history.replaceState=function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_rs.apply(this,arguments):_rs.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
+    '  history.pushState=__nat(function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_ps.apply(this,arguments):_ps.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;},_ps);',
+    '  history.replaceState=__nat(function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_rs.apply(this,arguments):_rs.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;},_rs);',
     '}catch(e){}',
 
     /* ---------- 状态上报 ---------- */
