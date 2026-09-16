@@ -316,12 +316,17 @@ function buildInjectScript(realUrl) {
     '  location.replace=function(u){location.href=proxied(u);};',
     '}catch(e){}',
 
-    /* ---------- history 钩子：SPA 路由切换时同步外壳地址与标题 ---------- */
+    /* ---------- history 钩子：SPA 路由切换时同步外壳地址与标题 ----------
+     * 关键：SPA 路由器（vue-router/react-router/Next.js）会调用
+     * pushState/replaceState 写入真实站点 URL（如 https://juejin.cn/post/1），
+     * 而代理文档的源是本站，浏览器会抛 SecurityError 导致路由器崩溃、
+     * 点击链接全部失效。必须在调用原始方法前把 URL 重写为镜像代理 URL。 */
     'function realHref(){try{var m=/[?&]__nova_url=([^&]+)/.exec(location.search);if(m)return decodeURIComponent(m[1])+location.hash;}catch(e){}return location.href;}',
+    'function stateUrl(u){try{if(u==null||u==="")return null;var abs=new URL(String(u),realHref());return PROXY+ppath(abs);}catch(e){return null;}}',
     'try{',
     '  var _ps=history.pushState,_rs=history.replaceState;',
-    '  history.pushState=function(){var r=_ps.apply(this,arguments);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
-    '  history.replaceState=function(){var r=_rs.apply(this,arguments);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
+    '  history.pushState=function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_ps.apply(this,arguments):_ps.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
+    '  history.replaceState=function(s,t,u){var nu=stateUrl(u);var r=(nu===null)?_rs.apply(this,arguments):_rs.call(this,s,t,nu);post({type:"meta",title:document.title||"",url:realHref()});return r;};',
     '}catch(e){}',
 
     /* ---------- 状态上报 ---------- */
