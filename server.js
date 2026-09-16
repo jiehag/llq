@@ -152,6 +152,13 @@ function buildInjectScript(realUrl) {
     'var PROXY=location.origin;',
     'var P=window.parent;',
     'function post(m){try{m.__nova=1;P.postMessage(m,"*");}catch(e){}}',
+    /* 请求提示头：真实页面地址（供服务端还原 Referer/Origin/sec-fetch-site）+ 本地即时写入的 Cookie。
+     * 服务端会消费并剥离这两个头，不会转发给上游站点。 */
+    'function novaHints(H){',
+    '  try{H.set("x-nova-ref",encodeURIComponent(realHref()));}catch(e){}',
+    '  try{var d=ckDirtyH();if(d)H.set("x-nova-ck-set",d);}catch(e){}',
+    '  return H;',
+    '}',
     /* 原生函数伪装：被包装的函数 toString 时返回原生签名。
      * 阿里系风控脚本（um.js 等）会检查 Function.prototype.toString 判断
      * 原生函数是否被篡改，检测到就提高验证码挑战频率。 */
@@ -222,8 +229,13 @@ function buildInjectScript(realUrl) {
     '  if(dead){delete myCK[p[0]];}else{myCK[p[0]]=p[1];}',
     '}',
     'var ckQ=[],ckTimer=null;',
+    /* 本地刚写入（尚未上报）的 Cookie 原文，按名去重；随请求头 x-nova-ck-set 即时带给服务端，
+     * 保证"JS 写 Cookie → 立刻发请求"这种反爬 Cookie 能力探测能通过（真实浏览器是同步可见的）。 */
+    'var ckDirty={};',
+    'function ckDirtyH(){var a=[];for(var k in ckDirty){if(Object.prototype.hasOwnProperty.call(ckDirty,k))a.push(ckDirty[k]);}return a.length?encodeURIComponent(a.join("\\n")):"";}',
+    'function ckDirtyPush(raw){try{var p=ckPair(raw);if(p&&p[0])ckDirty[p[0]]=raw;}catch(e){}}',
     'function ckPost(v){ckQ.push(v);if(ckTimer)return;ckTimer=setTimeout(ckFlush,250);}',
-    'function ckFlush(){ckTimer=null;var b=ckQ.join("\\n");ckQ=[];',
+    'function ckFlush(){ckTimer=null;var b=ckQ.join("\\n");ckQ=[];ckDirty={};',
     '  try{fetch(PROXY+"/__ck?o="+encodeURIComponent(RU)+"&t="+encodeURIComponent(CKT),{method:"POST",body:b,keepalive:true});}catch(e){}}',
     /* 关键：验证码组件（阿里 x5sec 等）成功后写 Cookie 会立刻 reload 页面，
      * 250ms 批量定时器被打断会导致验证通过的 Cookie 永远不上报、验证码反复出现。
@@ -245,7 +257,7 @@ function buildInjectScript(realUrl) {
     '  var dcp=Object.getOwnPropertyDescriptor(Document.prototype,"cookie");',
     '  Object.defineProperty(document,"cookie",{configurable:true,',
     '    get:function(){return ckSerialize();},',
-    '    set:function(v){ckApply(v);ckPost(v);}});',
+    '    set:function(v){ckApply(v);ckDirtyPush(v);ckPost(v);}});',
     '}catch(e){}',
 
     /* ---------- 存储隔离 ---------- */
@@ -290,6 +302,8 @@ function buildInjectScript(realUrl) {
     '          return patchResp(_fetch.call(window,input,init),ru);',
     '        }',
     '        var su=String(input);var nu2=proxied(su);',
+    '        init=init||{};',
+    '        try{init.headers=novaHints(new Headers(init.headers||{}));}catch(e){}',
     '        return patchResp(_fetch.call(window,nu2,init),nu2===su?null:su);',
     '      }catch(e){return _fetch.apply(window,arguments);}',
     '    },_fetch);',
@@ -307,6 +321,8 @@ function buildInjectScript(realUrl) {
     '    },_open);',
     '    X.send=__nat(function(){',
     '      var x=this;',
+    '      try{x.setRequestHeader("x-nova-ref",encodeURIComponent(realHref()));}catch(e){}',
+    '      try{var d=ckDirtyH();if(d)x.setRequestHeader("x-nova-ck-set",d);}catch(e){}',
     '      if(x.__nOrig){try{Object.defineProperty(x,"responseURL",{get:function(){return x.__nOrig;},configurable:true});}catch(e){}}',
     '      x.addEventListener("loadend",function(){ckSync();});',
     '      return _send.apply(x,arguments);',
@@ -606,6 +622,7 @@ const DROP_REQ_HEADERS = new Set([
   'host', 'connection', 'keep-alive', 'proxy-connection', 'te', 'trailer',
   'transfer-encoding', 'upgrade', 'content-length', 'accept-encoding',
   'cookie', 'origin', 'referer', 'upgrade-insecure-requests',
+  'x-nova-ref', 'x-nova-ck-set',
 ]);
 
 /* 解开可能存在的"套娃"镜像包装：自身代理 URL 里的 __nova_url 逐层解码 */
@@ -639,8 +656,14 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
     'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
   headers['accept-language'] = clientReq.headers['accept-language'] || 'zh-CN,zh;q=0.9,en;q=0.8';
   headers['accept-encoding'] = 'gzip, deflate, br';
+  /* 诊断模式下风控接口不压缩，日志里才能还原服务端返回的判定内容 */
+  if (DIAG && /_____tmd_____|hamlet\/async|\/h5\/mtop/i.test(u.pathname)) {
+    headers['accept-encoding'] = 'identity';
+  }
 
-  /* Referer / Origin 还原为真实站点，兼容防盗链与 CSRF 校验 */
+  /* Referer / Origin 还原为真实页面地址。
+   * 注意：绝不能引用未定义的 req（历史 bug），否则还原失败会退化成"合成的目标域名 Referer"，
+   * 风控网关（阿里 _____tmd_____ 等）收到自指向 Referer 会判定请求被篡改。 */
   let realRef = null;
   const ref = clientReq.headers['referer'];
   if (ref) {
@@ -648,21 +671,70 @@ function buildUpstreamHeaders(clientReq, u, bodyBuf) {
       const ru = new URL(ref);
       const nt = ru.searchParams.get('__nova_url');
       if (nt) {
-        realRef = unwrapSelf(req.headers.host || '', nt);
+        realRef = unwrapSelf(clientReq.headers.host || '', nt);
       } else if (ru.pathname === '/__p') {
         const target = ru.searchParams.get('url');
         if (target) realRef = target;
-      } else if (/^https?:/i.test(ref)) {
+      } else if (/^https?:/i.test(ref) && !/^(127\.0\.0\.1|localhost)$/i.test(ru.hostname)) {
         realRef = ref;
       }
     } catch (e) { /* ignore */ }
   }
+
+  /* 页面注入的提示头：真实页面地址（Referer 被站点策略抑制时也能算出正确的来源关系） */
+  let pageUrl = null;
+  const refHint = clientReq.headers['x-nova-ref'];
+  if (refHint) {
+    try {
+      const t = decodeURIComponent(String(refHint));
+      if (/^https?:/i.test(t)) pageUrl = t;
+    } catch (e) { /* ignore */ }
+  }
+  if (!pageUrl && realRef) pageUrl = realRef;
+
+  /* 客户端本地刚写入的 Cookie 立即并入 Jar（反爬的 Cookie 能力探测要求同步可见） */
+  const ckSet = clientReq.headers['x-nova-ck-set'];
+  if (ckSet) {
+    try {
+      let ckHost = u.hostname;
+      if (pageUrl) { try { ckHost = new URL(pageUrl).hostname; } catch (e) { /* ignore */ } }
+      decodeURIComponent(String(ckSet)).split('\n').forEach((line) => {
+        const c = parseSetCookie(line.trim());
+        if (!c) return;
+        const j = jarOf(jarKeyFor(ckHost, c.domain));
+        if (c.dead) j.delete(c.name);
+        else j.set(c.name, c.value);
+      });
+    } catch (e) { /* ignore */ }
+  }
+
   if (realRef) {
-    headers['referer'] = realRef;
-    try { headers['origin'] = new URL(realRef).origin; } catch (e) { /* ignore */ }
-  } else {
-    headers['referer'] = u.origin + '/';
-    if ((clientReq.method || 'GET') !== 'GET') headers['origin'] = u.origin;
+    /* 同源发完整地址，跨源只发 origin —— 与浏览器默认策略（strict-origin-when-cross-origin）一致 */
+    try {
+      const pr = new URL(realRef);
+      headers['referer'] = pr.hostname === u.hostname ? realRef : pr.origin + '/';
+    } catch (e) {
+      headers['referer'] = realRef;
+    }
+  }
+  /* 客户端没发 Referer 就不合成：真实浏览器不发时上游也应看不到（合成目标域名会触发风控） */
+  if ((clientReq.method || 'GET') !== 'GET') {
+    if (pageUrl) {
+      try { headers['origin'] = new URL(pageUrl).origin; } catch (e) { /* ignore */ }
+    }
+    if (!headers['origin']) headers['origin'] = u.origin;
+  }
+  /* sec-fetch-site 按真实来源关系重算：代理下浏览器只能报 same-origin，与真实站点关系不符 */
+  if (headers['sec-fetch-site'] && pageUrl) {
+    try {
+      const ph = new URL(pageUrl).hostname;
+      headers['sec-fetch-site'] =
+        ph === u.hostname
+          ? 'same-origin'
+          : baseDomainOf(ph) === baseDomainOf(u.hostname)
+            ? 'same-site'
+            : 'cross-site';
+    } catch (e) { /* ignore */ }
   }
 
   if (clientReq.headers['range']) headers['range'] = clientReq.headers['range'];
@@ -701,6 +773,8 @@ function proxyRequest(clientReq, clientRes, targetUrl, depth, method, bodyBuf) {
     m: method || 'GET',
     ck: ckNames(headers['cookie']),
     ref: String(headers['referer'] || '').slice(0, 120),
+    or: headers['origin'] ? String(headers['origin']).slice(0, 60) : undefined,
+    sfs: headers['sec-fetch-site'] || undefined,
   });
 
   const preq = lib.request(
@@ -785,6 +859,20 @@ function handleUpstream(pres, res, u) {
   if (!isHtml) {
     // 二进制 / 流媒体：原样透传，保留 Range 相关头，视频进度可拖动
     if (!out['cache-control']) out['cache-control'] = 'public, max-age=300';
+    /* 诊断：风控接口的响应体是判定依据（为何持续要求验证），采样记入日志 */
+    if (DIAG && /_____tmd_____|hamlet\/async|\/h5\/mtop/i.test(u.pathname)) {
+      const bufs = [];
+      let n = 0;
+      pres.on('data', (c) => {
+        if (n < 3000) { bufs.push(c); n += c.length; }
+      });
+      pres.on('end', () => {
+        try {
+          const body = Buffer.concat(bufs).toString('utf8').replace(/\s+/g, ' ').slice(0, 500);
+          diag({ body: (u.host + u.pathname).slice(0, 120), st: pres.statusCode, preview: body });
+        } catch (e) { /* ignore */ }
+      });
+    }
     res.writeHead(pres.statusCode || 200, out);
     pres.pipe(res);
     pres.on('error', () => res.end());
