@@ -932,6 +932,7 @@ function renderWeb(tab, url) {
   tab.iframe = frame;
 
   frame.addEventListener('load', () => {
+    clearTimeout(frame.__ldTimer);
     tab.loading = false;
     /* 代理模式下 iframe 与外壳同源，可直接读取标题与图标 */
     try {
@@ -970,6 +971,12 @@ function loadFrame(tab, url) {
   frame.__realUrl = url;
   tab.loading = true;
   renderTabbar(); startProgress();
+  /* 看门狗：页面里任何一个子资源挂住（统计脚本/广告/慢请求）都会阻止 iframe 的
+   * load 事件，导致转圈永不停。15 秒后强制结束加载状态，页面照常可用。 */
+  clearTimeout(frame.__ldTimer);
+  frame.__ldTimer = setTimeout(() => {
+    if (tab.loading) { tab.loading = false; renderTabbar(); stopProgress(); }
+  }, 15000);
   frame.src = src;
 }
 
