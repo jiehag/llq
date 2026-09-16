@@ -295,6 +295,36 @@ button{border:none;background:none;cursor:pointer;padding:0}
   border:1px solid var(--border);font-size:11px;font-family:ui-monospace,Consolas,monospace;color:var(--text)}
 .help-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 22px}
 .help-item{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12.4px;padding:6px 0;color:var(--muted)}
+
+/* ============================ 移动端适配 ============================ */
+/* 触屏设备：没有悬停，控件常显 */
+@media(hover:none){
+  .tab .cls{opacity:.7}
+  .tile .del{display:flex;opacity:.7}
+  .sb-item .act{opacity:.7}
+}
+@media(max-width:680px){
+  .titlebar{padding:0 6px}
+  .brand>span:last-child{display:none}
+  .winctrl{display:none}
+  #tabs{overflow-x:auto;scrollbar-width:none}
+  #tabs::-webkit-scrollbar{display:none}
+  .tab{min-width:84px;max-width:150px}
+  .toolbar{gap:4px;padding:0 5px}
+  #btn-home,#btn-proxy{display:none}
+  .nt-in{padding:34px 16px 44px}
+  .nt-logo{font-size:32px}
+  .statusbar{padding:0 8px;gap:6px}
+  #st-zoom-wrap,#st-tabs{display:none}
+  #st-page{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .body{position:relative}
+  .sidebar{position:absolute;right:0;top:0;bottom:0;width:min(86vw,300px);z-index:40;box-shadow:var(--shadow)}
+  .pl-top{flex-wrap:wrap;padding:8px 10px}
+  .pl-top input{height:32px}
+  .pl-bar,.pl-side{padding-left:10px;padding-right:10px}
+  .help-list{grid-template-columns:1fr}
+  .modal{max-width:94vw}
+}
 </style>
 </head>
 <body>
@@ -964,7 +994,7 @@ function renderPlayer(tab, url, localName) {
       '</div>' +
       '<div class="pl-stage" id="pl-stage">' +
         '<video id="pl-v" controls playsinline preload="metadata"></video>' +
-        '<div class="pl-hint" id="pl-hint"><span class="big">&#9654;</span>在上方粘贴视频链接，或把本地视频文件拖到这里</div>' +
+        '<div class="pl-hint" id="pl-hint"><span class="big">&#9654;</span>在上方粘贴视频链接，点「本地文件」选择视频，或把文件拖到这里</div>' +
         '<div class="pl-drop" id="pl-drop"><span style="font-size:34px">&#8681;</span><span>松手即可播放本地文件</span></div>' +
       '</div>' +
       '<div class="pl-bar">' +

@@ -815,10 +815,21 @@ function start(port) {
     }
   });
 
-  server.listen(port, '127.0.0.1', () => {
+  server.listen(port, '0.0.0.0', () => {
+    const os = require('os');
+    const ips = [];
+    Object.keys(os.networkInterfaces()).forEach(k => {
+      (os.networkInterfaces()[k] || []).forEach(n => {
+        if (n.family === 'IPv4' && !n.internal) ips.push(n.address);
+      });
+    });
     console.log('');
-    console.log('  Nova Browser 已启动');
-    console.log('  访问地址:  http://127.0.0.1:' + port);
+    console.log('  Nova Browser 已启动（局域网可访问）');
+    console.log('  本机访问:   http://127.0.0.1:' + port);
+    ips.forEach(ip => {
+      console.log('  局域网访问: http://' + ip + ':' + port + '   <- 手机连同一 WiFi 可打开');
+    });
+    console.log('  提示: 手机打不开时，检查 Windows 防火墙是否放行 Node.js / 该端口');
     console.log('  停止服务:  Ctrl + C');
     console.log('');
   });
