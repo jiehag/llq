@@ -140,10 +140,14 @@ function buildInjectScript(realUrl) {
     '}catch(e){}',
 
     /* ---------- URL 重写 ----------
-     * 镜像路径方案：代理 URL = 本站 pathname + ?__nova_url=真实地址。
-     * 这样 iframe 的 location.pathname 与真实站点一致，SPA 路由（vue/react router 等）
-     * 读取 pathname 才不会 404。 */
-    'function ppath(abs){var p="/";try{p=new URL(abs).pathname||"/";}catch(e){}return p+"?__nova_url="+encodeURIComponent(abs);}',
+     * 镜像路径方案：代理 URL = 本站 pathname + 真实 query + ?__nova_url=真实地址。
+     * pathname 与真实站点一致（SPA 路由依赖）；真实 query 同时放在可见位置，
+     * 页面 JS 读 location.search 才能拿到 q、page 等参数（如淘宝搜索"请输入搜索关键词"问题）。 */
+    'function ppath(abs){var u=null;try{u=new URL(abs);}catch(e){}',
+    '  if(!u)return "/?__nova_url="+encodeURIComponent(abs);',
+    '  try{u.searchParams.delete("__nova_url");}catch(e){}',
+    '  var s=u.search;',
+    '  return u.pathname+s+(s?"&":"?")+"__nova_url="+encodeURIComponent(u.href);}',
     /* 相对地址解析基准用真实地址 realHref()（函数声明提升可用），不能用 document.baseURI：
      * 镜像模式下已不注入 <base>，baseURI 是代理 URL，会把相对链接解析到本站源 */
     'function proxied(u){',
@@ -357,7 +361,7 @@ function buildInjectScript(realUrl) {
      * 点击链接全部失效。必须在调用原始方法前把 URL 重写为镜像代理 URL。
      * 注意：有些站点（如 B 站）直接传 location.href（即代理 URL 本身），
      * 若不先解包会套娃成双重镜像，导致 Referer 还原失败、API 被风控拦截。 */
-    'function unproxy(u){var g=0;u=String(u);while(g++<5&&u.indexOf(PROXY)===0){var i=u.indexOf("?__nova_url=");if(i<0)break;try{u=decodeURIComponent(u.slice(i+12));}catch(e){break;}}return u;}',
+    'function unproxy(u){var g=0;u=String(u);while(g++<5&&u.indexOf(PROXY)===0){var m=/[?&]__nova_url=([^&]+)/.exec(u);if(!m)break;try{u=decodeURIComponent(m[1]);}catch(e){break;}}return u;}',
     'function realHref(){try{var m=/[?&]__nova_url=([^&]+)/.exec(location.search);if(m)return unproxy(decodeURIComponent(m[1]))+location.hash;}catch(e){}return location.href;}',
     'function stateUrl(u){try{if(u==null||u==="")return null;var abs=new URL(String(u),realHref());return PROXY+ppath(new URL(unproxy(abs.href)));}catch(e){return null;}}',
     'try{',
@@ -413,11 +417,14 @@ function decodeText(buf, charset) {
   }
 }
 
-/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），真实地址放 __nova_url 参数 */
+/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），
+ * 真实 query 放可见位置（页面 JS 读 location.search 依赖），完整真实地址放 __nova_url 参数 */
 function proxyUrlFor(realUrl) {
-  let p = '/';
-  try { p = new URL(realUrl).pathname || '/'; } catch (e) { /* ignore */ }
-  return p + '?__nova_url=' + encodeURIComponent(realUrl);
+  let u;
+  try { u = new URL(realUrl); } catch (e) { return '/?__nova_url=' + encodeURIComponent(realUrl); }
+  try { u.searchParams.delete('__nova_url'); } catch (e) { /* ignore */ }
+  const s = u.search;
+  return u.pathname + s + (s ? '&' : '?') + '__nova_url=' + encodeURIComponent(u.href);
 }
 
 function rewriteIframeSrcs(html, realUrl) {
@@ -552,9 +559,9 @@ function unwrapSelf(host, url) {
   const prefixes = ['http://' + host + '/', 'https://' + host + '/'];
   for (let g = 0; g < 5; g++) {
     if (!prefixes.some((p) => out.startsWith(p))) break;
-    const idx = out.indexOf('?__nova_url=');
-    if (idx < 0) break;
-    try { out = decodeURIComponent(out.slice(idx + 12)); } catch (e) { break; }
+    const m = /[?&]__nova_url=([^&]+)/.exec(out);
+    if (!m) break;
+    try { out = decodeURIComponent(m[1]); } catch (e) { break; }
   }
   return out;
 }
@@ -918,7 +925,7 @@ function start(port) {
           const rt = ru.searchParams.get('__nova_url');
           if (rt) {
             const rOrigin = new URL(unwrapSelf(req.headers.host || '', rt)).origin;
-            res.writeHead(302, { location: p + '?__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
+            res.writeHead(302, { location: p + parsed.search + (parsed.search ? '&' : '?') + '__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
             return res.end();
           }
         } catch (e) { /* ignore */ }

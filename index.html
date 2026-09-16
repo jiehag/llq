@@ -1915,11 +1915,14 @@ function applyTheme(t) {
  * ================================================================== */
 const NOVA_SERVER = 'http://127.0.0.1:7180';
 
-/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），真实地址放 __nova_url 参数 */
+/* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），
+ * 真实 query 放可见位置（页面 JS 读 location.search 依赖），完整真实地址放 __nova_url 参数 */
 function proxyHref(url) {
-  let p = '/';
-  try { p = new URL(url).pathname || '/'; } catch (e) { /* ignore */ }
-  return p + '?__nova_url=' + encodeURIComponent(url);
+  let u;
+  try { u = new URL(url); } catch (e) { return '/?__nova_url=' + encodeURIComponent(url); }
+  try { u.searchParams.delete('__nova_url'); } catch (e) { /* ignore */ }
+  const s = u.search;
+  return u.pathname + s + (s ? '&' : '?') + '__nova_url=' + encodeURIComponent(u.href);
 }
 
 /* 静态托管模式：页面不是从本地服务（server.js）提供的，
