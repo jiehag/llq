@@ -133,6 +133,23 @@ function clientIpOf(req) {
   return xf || (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
+/* 每个客户端最近一次代理的真实站点 origin：站点页面内未被钩住且不带
+ * Referer 的跳转（location.href='/xxx' + no-referrer 策略）会以裸路径打到
+ * 本服务，兜底 302 需要知道该回哪个站点。 */
+const LAST_ORIGIN = new Map(); // ip -> { origin, t }
+const LAST_ORIGIN_TTL = 30 * 60 * 1000;
+
+function rememberLastOrigin(req, u) {
+  try {
+    const ip = clientIpOf(req);
+    LAST_ORIGIN.set(ip, { origin: u.origin, t: Date.now() });
+    if (LAST_ORIGIN.size > 5000) {
+      const now = Date.now();
+      for (const [k, v] of LAST_ORIGIN) { if (now - v.t > LAST_ORIGIN_TTL) LAST_ORIGIN.delete(k); }
+    }
+  } catch (e) { /* ignore */ }
+}
+
 /* ------------------------------------------------------------------ *
  * Cookie Jar（按主域隔离，服务端保存）
  * ------------------------------------------------------------------ */
@@ -1286,6 +1303,7 @@ function proxyRequest(clientReq, clientRes, targetUrl, depth, method, bodyBuf) {
 
   const lib = u.protocol === 'https:' ? https : http;
   const headers = buildUpstreamHeaders(clientReq, u, bodyBuf);
+  rememberLastOrigin(clientReq, u);
 
   diag({
     req: (u.host + u.pathname).slice(0, 140),
@@ -2578,19 +2596,25 @@ function start(port) {
     }
 
     /* 兜底中转：页面里未被钩住的跳转（如 location.href='/xxx'）会打到本站裸路径。
-     * 若 Referer 是镜像代理页，则 302 到对应的镜像 URL，保证导航不断链。 */
+     * 优先从 Referer 还原目标站点；Referer 缺失（站点 no-referrer 策略/重定向链）
+     * 时退回到该客户端最近一次代理的站点 origin。 */
     if (p !== '/' && p !== '/index.html' && !p.startsWith('/__')) {
+      let rOrigin = null;
       const rf = req.headers['referer'];
       if (rf) {
         try {
           const ru = new URL(rf);
           const rt = ru.searchParams.get('__nova_url');
-          if (rt) {
-            const rOrigin = new URL(unwrapSelf(req.headers.host || '', rt)).origin;
-            res.writeHead(302, { location: p + parsed.search + (parsed.search ? '&' : '?') + '__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
-            return res.end();
-          }
+          if (rt) rOrigin = new URL(unwrapSelf(req.headers.host || '', rt)).origin;
         } catch (e) { /* ignore */ }
+      }
+      if (!rOrigin) {
+        const rec = LAST_ORIGIN.get(clientIpOf(req));
+        if (rec && Date.now() - rec.t < LAST_ORIGIN_TTL) rOrigin = rec.origin;
+      }
+      if (rOrigin) {
+        res.writeHead(302, { location: p + parsed.search + (parsed.search ? '&' : '?') + '__nova_url=' + encodeURIComponent(rOrigin + p + parsed.search) });
+        return res.end();
       }
     }
 
