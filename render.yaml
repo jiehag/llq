@@ -1,0 +1,19 @@
+# ---- 一键部署到 Render（免费额度即可）----
+# 用法：Render 控制台 → New → Blueprint → 选择本仓库 → 自动读取本文件
+services:
+  - type: web
+    name: nova-browser
+    runtime: node
+    plan: free
+    buildCommand: ""            # 零依赖，无需构建
+    startCommand: node server.js
+    healthCheckPath: /__health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # 公网模式：拒绝内网/云元数据地址 + 按 IP 限流
+      - key: NOVA_PUBLIC
+        value: "1"
+      - key: NOVA_RATE_MAX
+        value: "1500"

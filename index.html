@@ -297,6 +297,20 @@ button{border:none;background:none;cursor:pointer;padding:0}
 .help-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 22px}
 .help-item{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12.4px;padding:6px 0;color:var(--muted)}
 
+/* ============================ 下载管理器 ============================ */
+#st-dl{cursor:pointer}
+.dl-item{align-items:flex-start;padding-top:9px;padding-bottom:9px}
+.dl-item .fav{margin-top:1px}
+.dl-item .txt{min-width:0}
+.dl-item .t1{font-size:12.4px}
+.dl-meta{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dl-bar{height:4px;background:var(--border-soft);border-radius:3px;overflow:hidden;margin-top:6px}
+.dl-bar i{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .35s}
+.dl-bar.indet i{width:38%;animation:dlind 1.1s ease-in-out infinite}
+@keyframes dlind{0%{margin-left:-40%}100%{margin-left:105%}}
+.dl-item.paused .dl-bar i{background:#d98209}
+.dl-item.err .dl-bar i{background:#e5484d}
+
 /* ============================ 移动端适配 ============================ */
 /* 触屏设备：没有悬停，控件常显 */
 @media(hover:none){
@@ -404,6 +418,7 @@ button{border:none;background:none;cursor:pointer;padding:0}
           <button class="sb-tab on" data-sb="history">历史记录</button>
           <button class="sb-tab" data-sb="bookmarks">书签</button>
           <button class="sb-tab" data-sb="downloads">下载</button>
+          <button class="sb-tab" data-sb="media">媒体</button>
         </div>
         <button class="ibtn" id="btn-sb-close" title="关闭">
           <svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -426,6 +441,8 @@ button{border:none;background:none;cursor:pointer;padding:0}
   <!-- 状态栏 -->
   <div class="statusbar">
     <span class="pill" id="st-proxy"><span class="d"></span><span id="st-proxy-t">渲染代理已开启</span></span>
+    <button class="pill" id="st-dl" style="display:none" title="下载管理 (Ctrl+J)"><span class="d" style="background:var(--accent)"></span><span id="st-dl-t">下载</span></button>
+    <button class="pill" id="st-media" style="display:none" title="本页嗅探到的媒体"><span class="d" style="background:#c2410c"></span><span id="st-media-t">媒体</span></button>
     <span id="st-page">新标签页</span>
     <span class="sp"></span>
     <span id="st-zoom-wrap">
@@ -446,6 +463,39 @@ button{border:none;background:none;cursor:pointer;padding:0}
 /* ==================================================================
  * Nova Browser — 前端内核
  * ================================================================== */
+/* ---------------- 外壳防劫持（必须最先执行） ----------------
+ * 镜像架构下站点页面与外壳同源，个别站点的反框架/SDK 脚本可能直接改写
+ * 父文档（document.write / body.innerHTML）。此处在创建任何站点 frame
+ * 之前封死外壳文档的写入口，并加看门狗自动恢复。 */
+(function hardenShell() {
+  const d = document;
+  try {
+    d.open = function () { return d; };
+    d.close = function () {};
+    d.write = function () {};
+    d.writeln = function () {};
+  } catch (e) {}
+  ['documentElement', 'body'].forEach(k => {
+    const el = d[k];
+    if (!el) return;
+    ['innerHTML', 'outerHTML'].forEach(p => {
+      try { Object.defineProperty(el, p, { set() {}, get() { return ''; }, configurable: true }); } catch (e) {}
+    });
+  });
+  const appRoot = d.getElementById('app');
+  if (appRoot) {
+    setInterval(() => {
+      try {
+        if (!d.body.contains(appRoot)) d.body.insertBefore(appRoot, d.body.firstChild);
+        const sb = d.querySelector('.statusbar');
+        if (sb && !d.body.contains(sb)) d.body.appendChild(sb);
+        if (d.body.style.display === 'none') d.body.style.display = '';
+      } catch (e) {}
+    }, 1000);
+  }
+  window.__HARDENED = 1;
+})();
+
 const $  = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
 
@@ -638,6 +688,7 @@ const I = {
   loop: '<svg class="ic" viewBox="0 0 24 24"><path d="M17 2.5 20.5 6 17 9.5"/><path d="M3.5 11.5v-2A3.5 3.5 0 0 1 7 6h13"/><path d="M7 21.5 3.5 18 7 14.5"/><path d="M20.5 12.5v2a3.5 3.5 0 0 1-3.5 3.5H4"/></svg>',
   snap: '<svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5h4L8.5 6h7L17 8.5h4v10H3z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   down: '<svg class="ic" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
+  copy: '<svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>',
   reload: '<svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>',
   warn: '<svg class="ic big" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9.5v4.5M12 17h.01"/></svg>'
 };
@@ -981,7 +1032,30 @@ function loadFrame(tab, url) {
 }
 
 /* --------------------------- 视频播放器 --------------------------- */
-const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+/* hls.js 多 CDN 兜底（jsdelivr 在部分网络不可达） */
+const HLS_CDNS = [
+  'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js',
+  'https://registry.npmmirror.com/hls.js/1.5.13/files/dist/hls.min.js',
+  'https://unpkg.com/hls.js@1/dist/hls.min.js',
+];
+let hlsLoading = null;
+
+function ensureHls() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (hlsLoading) return hlsLoading;
+  const tryAt = i => {
+    if (i >= HLS_CDNS.length) { hlsLoading = null; return Promise.resolve(null); }
+    return new Promise(resolve => {
+      const s = document.createElement('script');
+      s.src = HLS_CDNS[i];
+      s.onload = () => resolve(window.Hls || null);
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    }).then(H => (H ? H : tryAt(i + 1)));
+  };
+  hlsLoading = tryAt(0);
+  return hlsLoading;
+}
 
 function renderPlayer(tab, url, localName) {
   clearView(tab);
@@ -1048,8 +1122,13 @@ function renderPlayer(tab, url, localName) {
     const em = toEmbed(u);
     if (em) { openEmbed(em, u); return; }
     // 直链 -> 内置播放器
+    // m3u8 走 /__media/stream/ 路由：路径保留真实 host，播放列表里的
+    // 相对分片地址按本路径解析后仍指向同一路由（?__nova_url= 参数会在
+    // 相对解析时丢失，普通镜像路径无法承载 HLS）
     let src = u;
-    if (settings.proxy && !/^(blob|data):/i.test(src)) src = proxyHref(src);
+    if (settings.proxy && !/^(blob|data):/i.test(src)) {
+      src = /\.m3u8([?#]|$)/i.test(src.split('#')[0]) ? streamHref(src) : proxyHref(src);
+    }
     loadMedia(src, u);
   }
 
@@ -1195,10 +1274,19 @@ function renderPlayer(tab, url, localName) {
   };
   $('#pl-dl', v).onclick = () => {
     if (!video.src) return;
-    const a = document.createElement('a');
-    a.href = video.src; a.download = ''; a.click();
-    recordDownload(tab.url, '视频文件');
-    setMsg('已开始下载');
+    const s = video.src;
+    /* 本地文件 / 截图等 blob 地址：仍由浏览器直接另存 */
+    if (/^blob:/i.test(s)) {
+      const a = document.createElement('a');
+      a.href = s; a.download = ''; a.click();
+      setMsg('已交由浏览器保存');
+      return;
+    }
+    /* 在线视频：解包镜像代理地址，走下载管理器真实落盘（带进度/续传） */
+    let real = s;
+    try { const u = new URL(s); const nv = u.searchParams.get('__nova_url'); if (nv) real = nv; } catch (e) { /* ignore */ }
+    startDownload(real, '', real);
+    setMsg('已加入下载任务，可在侧栏「下载」中查看进度');
   };
 
   /* 拖放本地文件 */
@@ -1259,20 +1347,6 @@ function renderPlayer(tab, url, localName) {
 
   tabs.forEach(x => { if (x.view) x.view.classList.toggle('on', x.id === activeId); });
   syncUI();
-}
-
-let hlsLoading = null;
-function ensureHls() {
-  if (window.Hls) return Promise.resolve(window.Hls);
-  if (hlsLoading) return hlsLoading;
-  hlsLoading = new Promise(resolve => {
-    const s = document.createElement('script');
-    s.src = HLS_CDN;
-    s.onload = () => resolve(window.Hls);
-    s.onerror = () => resolve(null);
-    document.head.appendChild(s);
-  });
-  return hlsLoading;
 }
 
 function fmt(t) {
@@ -1417,6 +1491,9 @@ function syncUI() {
     : prettyUrl(t.url).slice(0, 96);
   updateZoomLabel();
   updateProxyUI();
+  updateMediaPill();
+  /* 切换标签后媒体页展示的是新活动标签的嗅探结果 */
+  if (sbTab === 'media') { mediaSig = ''; renderSidebar(); }
 }
 
 function updateProxyUI() {
@@ -1540,16 +1617,15 @@ function toggleSidebar(force) {
 }
 function renderSidebar() {
   const list = $('#sb-list');
+  if (sbTab === 'downloads') return renderDownloads();
+  if (sbTab === 'media') return renderMedia();
   const q = sbQuery.toLowerCase();
-  let items = [];
-  if (sbTab === 'history') items = history;
-  else if (sbTab === 'bookmarks') items = bookmarks;
-  else items = downloads;
+  let items = sbTab === 'history' ? history : bookmarks;
 
   if (q) items = items.filter(i => ((i.title || i.name || '') + ' ' + (i.url || '')).toLowerCase().indexOf(q) >= 0);
 
   if (!items.length) {
-    const msg = sbTab === 'history' ? '还没有浏览记录' : sbTab === 'bookmarks' ? '还没有书签，点击地址栏右侧的星标添加' : '还没有下载记录';
+    const msg = sbTab === 'history' ? '还没有浏览记录' : '还没有书签，点击地址栏右侧的星标添加';
     list.innerHTML = '<div class="sb-empty">' + msg + '</div>';
     $('#sb-count').textContent = '0 项';
     return;
@@ -1566,7 +1642,7 @@ function renderSidebar() {
     html += '<div class="sb-item" data-url="' + esc(url) + '" data-i="' + i + '">' +
       favHTML(url, 16) +
       '<div class="txt"><div class="t1">' + esc(title) + '</div>' +
-      '<div class="t2">' + esc(sbTab === 'downloads' ? timeAgo(it.ts) : prettyUrl(url)) + '</div></div>' +
+      '<div class="t2">' + esc(prettyUrl(url)) + '</div></div>' +
       '<div class="act">' +
         (sbTab === 'bookmarks' ? '<button class="ibtn" data-act="del" title="删除">' + I.trash + '</button>' : '') +
         '<button class="ibtn" data-act="open" title="打开">' + I.ext + '</button>' +
@@ -1604,13 +1680,335 @@ function groupOf(ts) {
   return (d.getMonth() + 1) + ' 月';
 }
 function clearSidebar() {
+  if (sbTab === 'media') {
+    const t = activeTab();
+    if (!t || !(t.mediaFound || []).length) return;
+    if (!confirm('确定要清空本页嗅探到的媒体列表吗？')) return;
+    t.mediaFound = [];
+    mediaSig = '';
+    renderSidebar(); updateMediaPill();
+    toast('已清空媒体列表');
+    return;
+  }
   const label = sbTab === 'history' ? '浏览记录' : sbTab === 'bookmarks' ? '全部书签' : '下载记录';
   if (!confirm('确定要清空' + label + '吗？此操作不可撤销。')) return;
   if (sbTab === 'history') { history = []; saveHistory(); }
   else if (sbTab === 'bookmarks') { bookmarks = []; saveBookmarks(); renderBookbar(); }
-  else { downloads = []; saveDownloads(); }
+  else {
+    /* 清空"已下载完成/失败"的任务与旧版下载记录（进行中/暂停的任务保留） */
+    downloads = []; saveDownloads();
+    if (!STATIC_MODE) {
+      fetch(NOVA_SERVER + '/__dl/ctl', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'clear' })
+      }).then(() => { dlSig = ''; dlPoll(); }).catch(() => {});
+    }
+  }
   renderSidebar(); syncUI();
   toast('已清空' + label);
+}
+
+/* ==================================================================
+ * 下载管理器（前端）
+ * 服务端负责真实下载（带 Cookie/Referer、断点续传、并发队列），
+ * 这里负责任务列表 UI、进度轮询与操作指令
+ * ================================================================== */
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB', 'TB'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
+}
+let dlJobs = [], dlSig = '';
+
+function startDownload(url, nameHint, refPage) {
+  if (!url || !/^https?:/i.test(url)) { toast('该链接无法下载'); return; }
+  if (STATIC_MODE) { toast('下载管理需要本地代理服务：请在电脑上运行 start.bat 后访问'); return; }
+  let ref = refPage || '';
+  if (!ref) {
+    const t = activeTab();
+    ref = t ? ((t.iframe && t.iframe.__realUrl) || t.url || '') : '';
+  }
+  fetch(NOVA_SERVER + '/__dl/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url: url, ref: ref, name: nameHint || '' })
+  }).then(r => r.json()).then(j => {
+    if (j.err) { toast('下载失败：' + j.err); return; }
+    toast('已加入下载：' + j.job.name);
+    dlSig = '';
+    dlPoll();
+  }).catch(() => toast('下载服务不可用'));
+}
+
+function dlCtl(id, action, delFile) {
+  fetch(NOVA_SERVER + '/__dl/ctl', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: id, action: action, delFile: !!delFile })
+  }).then(r => r.json()).then(j => {
+    if (j.err) { toast(j.err); return; }
+    if (action === 'remove') toast('已删除任务');
+    dlSig = '';
+    dlPoll();
+  }).catch(() => toast('下载服务不可用'));
+}
+
+function updateDlPill() {
+  const el = $('#st-dl');
+  if (!el) return;
+  const act = dlJobs.filter(j => j.status === 'downloading' || j.status === 'paused');
+  if (!act.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const dls = act.filter(j => j.status === 'downloading');
+  const pcts = dls.filter(j => j.total).map(j => j.received / j.total * 100);
+  const avg = pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : null;
+  $('#st-dl-t').textContent = dls.length + ' 个下载中' + (avg != null ? ' · ' + avg + '%' : '');
+}
+
+function dlPoll() {
+  if (STATIC_MODE) return;
+  fetch(NOVA_SERVER + '/__dl/list').then(r => r.json()).then(j => {
+    dlJobs = (j && j.jobs) || [];
+    updateDlPill();
+    if (sbTab === 'downloads' && $('#sidebar').classList.contains('open')) {
+      /* 内容无变化不重渲染，避免打断悬停/滚动 */
+      const sig = JSON.stringify(dlJobs.map(x => [x.id, x.status, x.received, x.speed, x.error, x.note]));
+      if (sig !== dlSig) { dlSig = sig; renderSidebar(); }
+    }
+    setTimeout(dlPoll, (j && j.hasActive) ? 1000 : 4000);
+  }).catch(() => setTimeout(dlPoll, 6000));
+}
+
+function extOf(name) {
+  const m = /\.([\w]{1,6})$/.exec(String(name || ''));
+  return m ? m[1].toUpperCase().slice(0, 4) : '文件';
+}
+
+function dlItemHTML(j) {
+  const pct = j.total ? Math.min(100, Math.floor(j.received / j.total * 100)) : 0;
+  let meta = '', bar = '';
+  const cls = j.status === 'error' ? ' err' : j.status === 'paused' ? ' paused' : '';
+  const sizeTxt = j.total ? fmtSize(j.received) + ' / ' + fmtSize(j.total) + ' · ' + pct + '%' : fmtSize(j.received);
+  if (j.status === 'downloading') {
+    meta = (j.note ? j.note + ' · ' : '') + sizeTxt + (j.speed ? ' · ' + fmtSize(j.speed) + '/s' : '');
+    bar = j.total ? '<div class="dl-bar"><i style="width:' + pct + '%"></i></div>'
+                  : '<div class="dl-bar indet"><i></i></div>';
+  } else if (j.status === 'paused') {
+    meta = '已暂停 · ' + (j.note ? j.note + ' · ' : '') + sizeTxt;
+    bar = j.total ? '<div class="dl-bar"><i style="width:' + pct + '%"></i></div>' : '';
+  } else if (j.status === 'error') {
+    meta = '失败：' + (j.error || '未知错误');
+  } else {
+    meta = fmtSize(j.total || j.received) + (j.doneTs ? ' · ' + timeAgo(j.doneTs) : '') + ' · 已完成';
+  }
+  let acts = '';
+  if (j.status === 'downloading') {
+    acts += '<button class="ibtn" data-act="pause" title="暂停"><svg class="ic" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg></button>';
+  }
+  if (j.status === 'paused' || j.status === 'error') {
+    acts += '<button class="ibtn" data-act="resume" title="' + (j.status === 'error' ? '重试' : '继续') + '"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4.5 19 12 7 19.5z" fill="currentColor" stroke="none"/></svg></button>';
+  }
+  if (j.status === 'done') {
+    acts += '<button class="ibtn" data-act="openos" title="用系统程序打开"><svg class="ic" viewBox="0 0 24 24"><path d="M3 8.5h4L8.5 6h7L17 8.5h4v10H3z"/><circle cx="12" cy="13" r="3"/></svg></button>';
+    acts += '<button class="ibtn" data-act="open" title="在浏览器中打开"><svg class="ic" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>';
+  }
+  acts += '<button class="ibtn" data-act="del" title="删除任务' + (j.status === 'done' ? '与文件' : '') + '"><svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>';
+  return '<div class="sb-item dl-item' + cls + '" data-id="' + esc(j.id) + '">' +
+    '<span class="fav" style="width:16px;height:16px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;background:' + colorFor(j.name || j.url) + '">' + esc(extOf(j.name)) + '</span>' +
+    '<div class="txt"><div class="t1">' + esc(j.name || '未命名文件') + '</div>' +
+    '<div class="dl-meta">' + esc(meta) + '</div>' + bar + '</div>' +
+    '<div class="act">' + acts + '</div></div>';
+}
+
+function renderDownloads() {
+  const list = $('#sb-list');
+  const q = sbQuery.toLowerCase();
+  const jobs = dlJobs.filter(j => !q || ((j.name || '') + ' ' + j.url).toLowerCase().indexOf(q) >= 0);
+  const legacy = downloads.filter(i => !q || ((i.name || '') + ' ' + (i.url || '')).toLowerCase().indexOf(q) >= 0);
+
+  if (!jobs.length && !legacy.length) {
+    list.innerHTML = '<div class="sb-empty">还没有下载任务<br>点击网页里的下载链接（zip / pdf / 文档等）<br>或视频播放器的下载按钮即可加入</div>';
+    $('#sb-count').textContent = '0 项';
+    return;
+  }
+
+  let html = '';
+  if (jobs.length) {
+    html += '<div class="sb-group">下载任务</div>';
+    jobs.forEach(j => { html += dlItemHTML(j); });
+  }
+  if (legacy.length) {
+    html += '<div class="sb-group">早期下载记录</div>';
+    legacy.forEach(it => {
+      html += '<div class="sb-item" data-url="' + esc(it.url) + '">' + favHTML(it.url, 16) +
+        '<div class="txt"><div class="t1">' + esc(it.name || '下载') + '</div>' +
+        '<div class="t2">' + esc(prettyUrl(it.url)) + '</div></div>' +
+        '<div class="act"><button class="ibtn" data-act="open" title="打开链接">' + I.ext + '</button></div></div>';
+    });
+  }
+  list.innerHTML = html;
+  $('#sb-count').textContent = (dlJobs.length + downloads.length) + ' 项';
+
+  $$('.sb-item.dl-item', list).forEach(el => {
+    const id = el.dataset.id;
+    el.addEventListener('click', e => {
+      const act = e.target.closest && e.target.closest('[data-act]');
+      if (!act) return;
+      e.stopPropagation();
+      const a = act.dataset.act;
+      if (a === 'pause') dlCtl(id, 'pause');
+      else if (a === 'resume') dlCtl(id, 'resume');
+      else if (a === 'open') window.open(NOVA_SERVER + '/__dl/file?id=' + encodeURIComponent(id), '_blank');
+      else if (a === 'openos') {
+        fetch(NOVA_SERVER + '/__dl/open?id=' + encodeURIComponent(id)).then(r => {
+          if (!r.ok) toast('仅电脑本机可直接打开，可用「在浏览器中打开」');
+        }).catch(() => {});
+      }
+      else if (a === 'del') {
+        const j = dlJobs.filter(x => x.id === id)[0];
+        dlCtl(id, 'remove', j && j.status === 'done');
+      }
+    });
+  });
+  $$('.sb-item', list).forEach(el => {
+    if (el.classList.contains('dl-item') || !el.dataset.url) return;
+    el.addEventListener('click', () => createTab({ url: el.dataset.url }));
+  });
+}
+
+function openDownloadsPanel() {
+  sbTab = 'downloads'; sbQuery = ''; $('#sb-q').value = '';
+  $$('.sb-tab').forEach(x => x.classList.toggle('on', x.dataset.sb === 'downloads'));
+  toggleSidebar(true);
+}
+
+/* ==================================================================
+ * 媒体嗅探（视频 / 音频）
+ * 服务端嗅探（所有流量过代理，按 Content-Type/扩展名识别）为主，
+ * 页面注入脚本上报 <video>/<audio> 实际播放地址为辅。
+ * 嗅探结果按"轮询时/上报时的活动标签"归到各标签页，侧栏"媒体"页展示。
+ * ================================================================== */
+let mediaSinceTs = 0, mediaSig = '';
+
+function tabMedia(t) { if (t && !t.mediaFound) t.mediaFound = []; return (t && t.mediaFound) || []; }
+
+function addMediaToTab(t, m) {
+  if (!t || t.mode !== 'web' || !m || !/^https?:/i.test(m.url || '')) return;
+  /* 带 __nova_url 的代理形态地址先解包；本源裸地址（无 __nova_url）是
+   * 待服务端 302 还原的兜底请求，服务端嗅探会以真实地址再报一条，这里不收 */
+  let u = String(m.url);
+  try {
+    const pu = new URL(u);
+    const q = pu.searchParams.get('__nova_url');
+    if (q) u = q;
+    else if (pu.origin === NOVA_SERVER) return;
+  } catch (e) { /* ignore */ }
+  m = Object.assign({}, m, { url: u });
+  const arr = tabMedia(t);
+  if (arr.some(x => x.url === m.url)) return;
+  arr.unshift(m);
+  if (arr.length > 60) arr.pop();
+  updateMediaPill();
+  if (sbTab === 'media' && $('#sidebar').classList.contains('open')) { mediaSig = ''; renderSidebar(); }
+}
+
+function mediaPoll() {
+  if (STATIC_MODE) return;
+  fetch(NOVA_SERVER + '/__media/list?since=' + mediaSinceTs).then(r => r.json()).then(j => {
+    (j && j.items || []).forEach(it => {
+      if (it.ts > mediaSinceTs) mediaSinceTs = it.ts;
+      addMediaToTab(activeTab(), it);
+    });
+    setTimeout(mediaPoll, 2500);
+  }).catch(() => setTimeout(mediaPoll, 6000));
+}
+
+function updateMediaPill() {
+  const el = $('#st-media');
+  if (!el) return;
+  const t = activeTab();
+  const n = (t && t.mediaFound) ? t.mediaFound.length : 0;
+  if (!n) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  $('#st-media-t').textContent = n + ' 个媒体';
+}
+
+function openMediaPanel() {
+  sbTab = 'media'; sbQuery = ''; $('#sb-q').value = '';
+  $$('.sb-tab').forEach(x => x.classList.toggle('on', x.dataset.sb === 'media'));
+  toggleSidebar(true);
+}
+
+/* 播放嗅探到的媒体：navigate 的 isMedia 分支会打开内置播放器 */
+function playSniffed(m) {
+  const t = activeTab();
+  if (!t) return;
+  toggleSidebar(false);
+  navigate(t, m.url, { raw: true });
+}
+
+function mediaNameOf(m) {
+  try {
+    const p = decodeURIComponent(new URL(m.url).pathname.split('/').pop() || '');
+    return p || m.url.slice(0, 60);
+  } catch (e) { return String(m.url).slice(0, 60); }
+}
+
+function mediaItemHTML(m, i) {
+  const kindTxt = m.kind === 'hls' ? 'HLS' : m.kind === 'dash' ? 'DASH' : m.kind === 'audio' ? '音频' : '视频';
+  const meta = (m.host || '') + (m.size ? ' · ' + fmtSize(m.size) : '') + (m.ts ? ' · ' + timeAgo(m.ts) : '');
+  return '<div class="sb-item mitem" data-i="' + i + '" title="' + esc(m.url) + '">' +
+    '<span class="fav" style="width:16px;height:16px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;background:' +
+      (m.kind === 'audio' ? '#0d9488' : '#c2410c') + '">' + esc(kindTxt.slice(0, 4)) + '</span>' +
+    '<div class="txt"><div class="t1">' + esc(mediaNameOf(m)) + '</div>' +
+    '<div class="t2">' + esc(meta) + '</div></div>' +
+    '<div class="act">' +
+      '<button class="ibtn" data-act="play" title="播放">' + I.play.replace('class="ic big"', 'class="ic"') + '</button>' +
+      '<button class="ibtn" data-act="dl" title="下载">' + I.down + '</button>' +
+      '<button class="ibtn" data-act="copy" title="复制地址">' + I.copy + '</button>' +
+      '<button class="ibtn" data-act="del" title="移除">' + I.trash + '</button>' +
+    '</div></div>';
+}
+
+function renderMedia() {
+  const list = $('#sb-list');
+  const t = activeTab();
+  if (!t || t.mode !== 'web') {
+    list.innerHTML = '<div class="sb-empty">切到任意网页标签后<br>这里会列出该页面嗅探到的视频 / 音频</div>';
+    $('#sb-count').textContent = '0 项';
+    return;
+  }
+  const q = sbQuery.toLowerCase();
+  const arr = tabMedia(t);
+  const items = q ? arr.filter(x => ((mediaNameOf(x) + ' ' + x.url + ' ' + (x.host || ''))).toLowerCase().indexOf(q) >= 0) : arr;
+  if (!items.length) {
+    list.innerHTML = '<div class="sb-empty">本页还没有嗅探到媒体<br>播放页面里的视频 / 音频后会出现在这里</div>';
+    $('#sb-count').textContent = '0 项';
+    return;
+  }
+  list.innerHTML = '<div class="sb-group">' + esc((t.title || hostOf(t.url) || '当前页面').slice(0, 24)) + '</div>' +
+    items.map((m, i) => mediaItemHTML(m, i)).join('');
+  $('#sb-count').textContent = items.length + ' 项';
+
+  $$('.sb-item.mitem', list).forEach(el => {
+    el.addEventListener('click', e => {
+      const act = e.target.closest && e.target.closest('[data-act]');
+      const idx = Number(el.dataset.i);
+      const m = items[idx];
+      if (!act) return playSniffed(m);
+      e.stopPropagation();
+      const a = act.dataset.act;
+      if (a === 'play') playSniffed(m);
+      else if (a === 'dl') startDownload(m.url, '', m.ref || t.url);
+      else if (a === 'copy') {
+        try { navigator.clipboard.writeText(m.url); toast('已复制媒体地址'); } catch (e2) { toast('复制失败'); }
+      }
+      else if (a === 'del') { const k = arr.indexOf(m); if (k >= 0) arr.splice(k, 1); mediaSig = ''; renderSidebar(); updateMediaPill(); }
+    });
+  });
 }
 
 /* ==================================================================
@@ -1740,7 +2138,7 @@ function openHelp() {
     ['重新打开关闭的标签页', 'Ctrl + Shift + T'], ['聚焦地址栏', 'Ctrl + L'],
     ['刷新页面', 'Ctrl + R / F5'], ['收藏当前页', 'Ctrl + D'],
     ['前进 / 后退', 'Alt + ← / →'], ['历史记录侧栏', 'Ctrl + H'],
-    ['页面缩放', 'Ctrl + + / -'],
+    ['下载管理器', 'Ctrl + J'], ['页面缩放', 'Ctrl + + / -'],
     ['切换标签页', 'Ctrl + 1 ~ 9']
   ];
   openModal('使用帮助',
@@ -1760,6 +2158,7 @@ function openHelp() {
       '· B 站 / 腾讯视频 / 优酷 链接会自动调用官方播放器；<br>' +
       '· <code>.mp4 / .webm / .m3u8</code> 等直链走内置播放器，支持拖动进度、倍速、循环、画中画、截图；<br>' +
       '· 本地视频文件可直接拖入播放器页面播放。' +
+      '<br>· 浏览网页时产生的视频 / 音频会自动嗅探到侧栏「媒体」页（状态栏也会提示），可一键播放或下载。' +
     '</div>');
 }
 
@@ -1786,6 +2185,7 @@ function handleKey(e) {
   if ((mod && k === 'r') || e.key === 'F5') { e.preventDefault(); reload(activeTab()); return; }
   if (mod && k === 'd') { e.preventDefault(); toggleBookmark(); return; }
   if (mod && k === 'h') { e.preventDefault(); toggleSidebar(); return; }
+  if (mod && k === 'j') { e.preventDefault(); openDownloadsPanel(); return; }
   if (mod && (k === '=' || k === '+')) { e.preventDefault(); setZoom(settings.zoom + 0.1); return; }
   if (mod && k === '-') { e.preventDefault(); setZoom(settings.zoom - 0.1); return; }
   if (mod && k === '0') { e.preventDefault(); setZoom(1); return; }
@@ -1813,6 +2213,7 @@ $('#btn-sb-close').onclick = () => toggleSidebar(false);
 $('#btn-settings').onclick = openSettings;
 $('#btn-help').onclick = openHelp;
 $('#btn-proxy').onclick = () => setProxy(!settings.proxy);
+$('#st-dl').onclick = openDownloadsPanel;
 $('#btn-video').onclick = () => navigate(activeTab(), 'nova://video', { raw: true });
 $('#btn-theme').onclick = () => applyTheme(settings.theme === 'dark' ? 'light' : 'dark');
 $('#btn-clear-side').onclick = clearSidebar;
@@ -1873,8 +2274,28 @@ window.addEventListener('message', e => {
       createTab({ url: d.url });
     }
     else navigate(t, d.url, { raw: true });
+  } else if (d.type === 'nova-p2v') {
+    /* 哔哩哔哩"外链播放器→视频页"提升：sandbox iframe 无法导航顶层，请求外壳执行。
+     * 顶层直接导航到带 _nova_p2v=1 的裸视频页（服务端放行，全屏可播）。 */
+    if (d.url && /^http:\/\/[^\/]+\/.+_nova_p2v=1/.test(d.url)) {
+      try { location.replace(d.url); } catch (err) {}
+    }
   } else if (d.type === 'form') {
     submitProxiedForm(t, d.action, d.pairs);
+  } else if (d.type === 'download') {
+    /* 页面里的下载链接（download 属性 / zip / pdf / 文档等）：交给下载管理器 */
+    startDownload(d.url, d.name, d.ref);
+  } else if (d.type === 'media') {
+    /* 注入脚本上报的 <video>/<audio> 播放地址：归到发起消息的标签页。
+     * 代理形态/裸代理地址的归一化在 addMediaToTab 内完成。 */
+    let mt = null;
+    try { mt = tabs.find(x => x.iframe && x.iframe.contentWindow === e.source) || null; } catch (err) { /* ignore */ }
+    if (!mt) mt = t;
+    addMediaToTab(mt, {
+      url: d.url, host: hostOf(d.url),
+      kind: /\.(mp3|m4a|aac|flac|ogg|opus|wav|wma)([?#]|$)/i.test(d.url) ? 'audio' : 'video',
+      ext: '', mime: '', size: 0, ts: Date.now(), ref: mt.url || '',
+    });
   } else if (d.type === 'meta') {
     if (d.title && d.title.trim()) { t.title = d.title.trim(); renderTabbar(); }
   } else if (d.type === 'key') {
@@ -1913,7 +2334,12 @@ function applyTheme(t) {
 /* ==================================================================
  * 启动
  * ================================================================== */
-const NOVA_SERVER = 'http://127.0.0.1:7180';
+const IS_FILE_OPEN = location.protocol === 'file:';
+/* 代理服务地址：file:// 打开时指回本机默认端口；http(s) 打开时就是当前源
+ * （无论 127.0.0.1 还是局域网 IP——手机经 LAN IP 访问同样成立） */
+const NOVA_SERVER = IS_FILE_OPEN ? 'http://127.0.0.1:7180' : location.origin;
+/* 电脑本机入口提示地址（静态托管横幅里指向它） */
+const PROXY_HINT = 'http://127.0.0.1:7180';
 
 /* 镜像路径代理 URL：pathname 与真实站点一致（SPA 路由依赖），
  * 真实 query 放可见位置（页面 JS 读 location.search 依赖），完整真实地址放 __nova_url 参数 */
@@ -1925,9 +2351,19 @@ function proxyHref(url) {
   return u.pathname + s + (s ? '&' : '?') + '__nova_url=' + encodeURIComponent(u.href);
 }
 
-/* 静态托管模式：页面不是从本地服务（server.js）提供的，
- * 此时网页代理不可用，仅保留视频播放器与可嵌入站点 */
-const STATIC_MODE = !/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || location.protocol === 'file:';
+/* HLS 流播放代理地址：路径保留真实 host，播放列表内相对分片地址可直接解析 */
+function streamHref(url) {
+  let u;
+  try { u = new URL(url); } catch (e) { return url; }
+  return '/__media/stream/' + u.protocol.replace(':', '') + '/' + u.host + u.pathname + u.search;
+}
+
+/* 静态托管模式：页面不是由 server.js 提供的（file:// 直接打开，或静态托管站点），
+ * 此时网页代理不可用，仅保留视频播放器与可嵌入站点。
+ * 判定依据：server.js 返回 index.html 时会注入 window.__NOVA_PROXY_SERVER__=1 标记。
+ * 此前用 hostname 是否为 localhost 判断，导致手机经局域网 IP 访问被误判为静态托管模式。 */
+const STATIC_MODE = IS_FILE_OPEN ||
+  !(window.__NOVA_PROXY_SERVER__ || /^(localhost|127\.0\.0\.1)$/.test(location.hostname));
 
 /* 页面不是通过本地服务打开时，给出醒目的跳转横幅 */
 function showWrongOriginBanner() {
@@ -1937,7 +2373,7 @@ function showWrongOriginBanner() {
   b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b45309;color:#fff;' +
     'padding:10px 16px;font-size:13px;line-height:1.6;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap';
   b.innerHTML = '⚠ 当前页面不是通过本地服务打开的，网页代理与视频功能不可用。' +
-    '<a href="' + NOVA_SERVER + '" style="color:#fff;text-decoration:underline;font-weight:700">点此打开 ' + NOVA_SERVER + '</a>';
+    '<a href="' + PROXY_HINT + '" style="color:#fff;text-decoration:underline;font-weight:700">点此打开 ' + PROXY_HINT + '</a>';
   document.body.appendChild(b);
 }
 
@@ -1949,8 +2385,8 @@ function showStaticModeBanner() {
   b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1d4ed8;color:#fff;' +
     'padding:10px 16px;font-size:13px;line-height:1.6;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap';
   b.innerHTML = '🚀 静态托管模式：视频播放（官方播放器 / 直链 / 本地文件）可用；' +
-    '<span style="opacity:.92">网页代理需本地运行 server.js（<a href="' + NOVA_SERVER + '" style="color:#fff;text-decoration:underline;font-weight:700">本机入口</a>），' +
-    '仓库内 <b>start.bat</b> 一键启动。</span>';
+    '<span style="opacity:.92">网页代理需在电脑上运行 server.js（<a href="' + PROXY_HINT + '" style="color:#fff;text-decoration:underline;font-weight:700">本机入口</a>），' +
+    '手机请访问 <b>http://电脑IP:7180</b>（电脑局域网 IP 见服务启动输出），仓库内 <b>start.bat</b> 一键启动。</span>';
   document.body.appendChild(b);
 }
 
@@ -1984,7 +2420,7 @@ function probeServer() {
       p.className = 'pill err';
       $('#st-proxy-t').textContent = '未连接本地服务';
       if (probeTries === 1 && settings.proxy) {
-        toast('未检测到本地代理服务：请运行 start.bat 启动服务，并通过 http://127.0.0.1:7180 访问');
+        toast('未检测到本地代理服务：请在电脑上运行 start.bat 启动，手机/其他设备访问 http://电脑IP:7180（IP 见服务启动输出）');
       }
       /* 服务可能是暂时中断（重启等），持续重试 1 分钟 */
       if (probeTries < 12) setTimeout(probeServer, 5000);
@@ -1995,11 +2431,16 @@ function probeServer() {
   applyTheme(settings.theme);
   renderBookbar();
   updateProxyUI();
-  createTab({ url: 'nova://home' });
+  /* 外壳地址带 __nova_url 时（刷新/直达/外部打开），在框架内恢复该站点会话 */
+  let bootTarget = null;
+  try { bootTarget = new URLSearchParams(location.search).get('__nova_url'); } catch (e) {}
+  createTab({ url: bootTarget || 'nova://home' });
   setZoom(settings.zoom);
   window.addEventListener('resize', applyZoom);
 
   probeServer();
+  if (!STATIC_MODE) dlPoll();
+  if (!STATIC_MODE) mediaPoll();
 })();
 </script>
 </body>

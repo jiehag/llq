@@ -1,0 +1,27 @@
+# ---- 部署到 Fly.io（可选，免费额度需绑卡）----
+# fly launch --no-deploy  然后  fly deploy
+app = "nova-browser"
+primary_region = "hkg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NOVA_PUBLIC = "1"
+  NOVA_RATE_MAX = "1500"
+
+[http_service]
+  internal_port = 7180
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

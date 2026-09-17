@@ -1,12 +1,42 @@
 # Nova Browser
 
-一个运行在网页里的浏览器。界面本身是网页，配一个本地渲染代理服务，让第三方网站能在窗口中被正常加载和浏览。
+一个运行在网页里的浏览器。界面本身是网页，配一个渲染代理服务，让第三方网站能在窗口中被正常加载和浏览。
 
-## 在线演示（GitHub Pages）
+## 在线使用
 
-<https://jiehag.github.io/llq/>
+| 版本 | 地址 | 能力 |
+| --- | --- | --- |
+| **完整版（公网，推荐）** | <https://nova-browser.app.workbuddy.host/> | 打开即用，无需安装：第三方网站加载、代理、下载管理全部可用 |
+| 静态版（GitHub Pages） | <https://jiehag.github.io/llq/> | 仅界面与官方播放器；网页代理需要服务端，多数网站无法加载 |
+| 本地完整版 | <http://127.0.0.1:7180> | 用自己电脑的网络出口，可访问公网实例够不到的站点 |
 
-> 在线版为**静态托管模式**：视频播放（B 站 / 腾讯 / 优酷官方播放器、直链视频、本地文件）可用；网页代理能力需要服务端，请在本地运行 `server.js` 获得完整体验。
+> 公网完整版运行在云沙箱，**出口为中国大陆网络**：国内站点（百度 / 知乎 / B 站 / 微博 / 抖音 / 淘宝 / 腾讯 / 掘金等）正常；Google、YouTube、X、维基百科、GitHub 等墙外站点不可达；少数小站会拒绝机房 IP。这类站点请用本地版（走你自己的家宽出口）。
+
+## 部署
+
+服务已满足云托管要求：零第三方依赖、监听 `PORT`、绑定 `0.0.0.0`，并内置公网安全护栏。
+
+**公网模式**（云平台自动注入 `PORT`，或手动 `NOVA_PUBLIC=1`）会启用：
+
+- **SSRF 防护**：拒绝代理到回环 / 内网 / 链路本地 / 云元数据地址（含 DNS 解析层过滤，防域名指向内网绕过）
+- **按 IP 限流**：默认 1500 请求/分钟，可用 `NOVA_RATE_MAX` 调整
+
+```bash
+# 本地（局域网模式，不启用护栏）
+node server.js
+
+# 公网模式
+PORT=3000 NOVA_PUBLIC=1 node server.js
+```
+
+仓库内已备好各平台部署清单，任选其一：
+
+| 方式 | 文件 | 说明 |
+| --- | --- | --- |
+| Docker | `Dockerfile` | `docker build -t nova . && docker run -p 7180:7180 nova` |
+| Render | `render.yaml` | 新建 Blueprint 指向本仓库，自动读取配置 |
+| Fly.io | `fly.toml` | `fly launch --no-deploy && fly deploy` |
+| 通用 PaaS | `Procfile` | Railway / Heroku 等直接识别 |
 
 ## 快速开始
 
@@ -82,8 +112,12 @@ node server.js
 ```
 nova-browser/
 ├── index.html    浏览器界面与前端内核（单文件）
-├── server.js     本地渲染代理服务
+├── server.js     渲染代理服务（零依赖）
 ├── start.bat     一键启动（Windows）
+├── Dockerfile    容器镜像
+├── render.yaml   Render 部署清单
+├── fly.toml      Fly.io 部署清单
+├── Procfile      通用 PaaS 启动声明
 └── README.md
 ```
 

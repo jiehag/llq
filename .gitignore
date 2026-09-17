@@ -1,0 +1,25 @@
+node_modules/
+downloads/
+*.log
+.DS_Store
+.env
+.env.local
+
+# 调试期临时产物（不入库）
+_scratch/
+an*.js
+an*.txt
+patch*.js
+patch-*.txt
+*-log.txt
+fetch-*.js
+dbg-*.png
+debug-*.png
+mobile-diag*.txt
+nova-diag*.html
+restart-log.txt
+t3-origin.js
+test3-e2e.js
+verify3*.js
+zhihu-unhuman.html
+rc-src/
