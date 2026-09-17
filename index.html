@@ -1031,6 +1031,21 @@ function loadFrame(tab, url) {
     if (tab.loading) { tab.loading = false; renderTabbar(); stopProgress(); }
   }, 15000);
   frame.src = src;
+  /* 静态托管模式：腾讯视频/优酷/豆瓣等大量网站发送 X-Frame-Options 拒绝内嵌，
+   * iframe 只会显示 ERR_BLOCKED_BY_RESPONSE 且无法从 JS 探测。给一条可关闭的
+   * 出路提示，让用户能一键在新标签页打开。 */
+  if (STATIC_MODE && /^https?:/i.test(url)) {
+    $$('.st-open-hint', tab.view).forEach(e => e.remove());
+    const hint = document.createElement('div');
+    hint.className = 'st-open-hint';
+    hint.style.cssText = 'position:absolute;left:0;right:0;bottom:0;z-index:60;background:rgba(23,37,84,.93);color:#fff;' +
+      'padding:8px 12px;font-size:12.5px;line-height:1.5;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap';
+    hint.innerHTML = '部分网站会拒绝被嵌入（显示空白/报错属正常）。' +
+      '<a href="' + esc(url) + '" target="_blank" rel="noopener" style="color:#93c5fd;font-weight:700;text-decoration:underline">在新标签页打开 ↗</a>' +
+      '<span data-x style="cursor:pointer;opacity:.8;font-size:18px;line-height:1;padding:0 4px">×</span>';
+    hint.querySelector('[data-x]').addEventListener('click', () => hint.remove());
+    tab.view.appendChild(hint);
+  }
 }
 
 /* --------------------------- 视频播放器 --------------------------- */
@@ -1502,6 +1517,8 @@ function updateProxyUI() {
   const b = $('#btn-proxy');
   b.classList.toggle('on', settings.proxy);
   const p = $('#st-proxy');
+  /* 静态托管模式：probeServer 已写入专属状态文案，这里不覆盖 */
+  if (STATIC_MODE) { p.className = 'pill warn'; $('#st-proxy-t').textContent = '静态托管模式 · 无本地代理'; return; }
   p.className = 'pill' + (settings.proxy ? '' : ' off');
   $('#st-proxy-t').textContent = settings.proxy ? '渲染代理已开启' : '渲染代理已关闭';
 }
@@ -2391,9 +2408,10 @@ function showStaticModeBanner() {
   b.className = 'nova-origin-banner';
   b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1d4ed8;color:#fff;' +
     'padding:10px 16px;font-size:13px;line-height:1.6;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap';
-  b.innerHTML = '🚀 静态托管模式：视频播放（官方播放器 / 直链 / 本地文件）可用；' +
-    '<span style="opacity:.92">网页代理需在电脑上运行 server.js（<a href="' + PROXY_HINT + '" style="color:#fff;text-decoration:underline;font-weight:700">本机入口</a>），' +
-    '手机请访问 <b>http://电脑IP:7180</b>（电脑局域网 IP 见服务启动输出），仓库内 <b>start.bat</b> 一键启动。</span>';
+  b.innerHTML = '🚀 静态托管模式：视频播放（官方播放器 / 直链 / 本地文件）可用，' +
+    '<b>部分网站会拒绝被嵌入，无法代理浏览</b>；' +
+    '<a href="https://nova-browser.app.workbuddy.host/" target="_blank" rel="noopener" style="color:#fff;text-decoration:underline;font-weight:700">打开公网完整版 ↗</a>' +
+    '<span style="opacity:.92">（或本地运行 server.js：<a href="' + PROXY_HINT + '" style="color:#fff;text-decoration:underline;font-weight:700">本机入口</a>，手机访问 <b>http://电脑IP:7180</b>，仓库内 <b>start.bat</b> 一键启动）</span>';
   document.body.appendChild(b);
 }
 
