@@ -796,7 +796,9 @@ function buildView(tab) {
 
 function clearView(tab) {
   tab.view.innerHTML = '';
-  tab.view.className = 'view';
+  /* 保留激活态：activate() 先于 render*() 执行，若在此处直接重置 className
+   * 会抹掉 'on'，导致新建/重渲染的视图 display:none（新标签页白屏）。 */
+  tab.view.className = 'view' + (tab.view.classList.contains('on') ? ' on' : '');
   tab.iframe = null;
   tab.media = null;
 }
@@ -837,7 +839,7 @@ function renderNewTab(tab) {
   v.innerHTML =
     '<div class="nt"><div class="nt-in">' +
       '<div class="nt-logo">Nova</div>' +
-      '<div class="nt-sub">轻量网页浏览器 · 本地渲染代理' + (settings.proxy ? '已开启' : '已关闭') + '</div>' +
+      '<div class="nt-sub">轻量网页浏览器 · 本地渲染代理' + (canProxy() ? '已开启' : '已关闭') + '</div>' +
       '<form class="nt-search" id="nt-form">' +
         '<span style="color:var(--muted);display:flex">' + I.search + '</span>' +
         '<input id="nt-input" placeholder="搜索或输入网址" autocomplete="off" spellcheck="false">' +
